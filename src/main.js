@@ -1295,6 +1295,14 @@ function handleAddSystemComponent(event) {
 window.handleAddSystemComponent = handleAddSystemComponent;
 
 // --- New Inline Form Submit Logic (Phase 15.4) ---
+// Exposed handler for Add button (Legacy / Global approach fallback if needed)
+function handleAddSystemComponent(event) {
+    if (event) event.preventDefault();
+    handleAddComponent(event);
+}
+window.handleAddSystemComponent = handleAddSystemComponent;
+
+// --- New Inline Form Submit Logic (Phase 15.4) ---
 window.handleInlineComponentSubmit = function (event) {
     if (event) event.preventDefault();
     const type = document.getElementById('inlineComponentType').value;
@@ -1400,15 +1408,6 @@ window.handleInlineComponentSubmit = function (event) {
         ui.updateUndoRedoUI(canUndo(), canRedo());
     }
 }
-
-        // 2. Indsæt komponenten, som brugeren rent faktisk bad om
-        addSystemComponent(newComp, actualParentId);
-
-        // 3. Genberegn systemet og opdater UI
-        if (typeof window.recalculateSystem === 'function') {
-            window.recalculateSystem();
-        }
-
 // --- Initialization ---
 
 async function initializeApp() {
