@@ -1288,7 +1288,6 @@ function recalculateSystem() {
 window.recalculateSystem = recalculateSystem;
 
 
-// Exposed handler for Add button (Legacy / Global approach fallback if needed)
 function handleAddSystemComponent(event) {
     if (event) event.preventDefault();
     handleAddComponent(event);
@@ -1323,9 +1322,6 @@ window.handleInlineComponentSubmit = function (event) {
     }
 
     // Determine correct suffix - if this was from the inline form container, we use '_inline', else empty string
-    // Wait, the button clicked could be either in 'systemComponentInputsContainer' or an inline container.
-    // If 'currentAddParentId' exists, it must be inline. If it's the root container, it could be either.
-    // However, the cleanest way is simply to check which DOM element triggered it, or check for existence of elements.
     const isInline = !!document.getElementById('ductLength_inline') || !!document.getElementById('systemFittingType_inline');
     const suffix = isInline ? '_inline' : '';
 
@@ -1364,16 +1360,33 @@ window.handleInlineComponentSubmit = function (event) {
         const startAirflowVal = document.getElementById('system_airflow') ? document.getElementById('system_airflow').value : '1000';
         stateManager.setProjectParams({ systemType, startAirflow: startAirflowVal, projectName });
 
-        // If it's the very first node (though inline buttons only appear if there's a tree, but just in case)
+        // If it's the very first node
         const systemComponents = getSystemComponents();
         if (systemComponents.length === 0) {
             component.state.airflow_in = currentAirflow;
         }
 
-        // Add exactly where requested
-        if (parentId) {
-            stateManager.addSystemComponent(component, parentId, parentPort || 'outlet', 'inlet');
+        // --- SMART TRANSITION LOGIC ---
+        let actualParentId = parentId;
+        let actualParentPort = parentPort || 'outlet';
+
+        if (actualParentId) {
+            // Tjek om fysikken kræver en overgang
+            const smartTransition = generateSmartTransition(parentComp, component);
+
+            if (smartTransition) {
+                // 1. Indsæt den beregnede overgang i træet først
+                stateManager.addSystemComponent(smartTransition, actualParentId, actualParentPort, 'inlet');
+                
+                // 2. Kæd den egentlige komponent fast på overgangens outlet
+                actualParentId = smartTransition.id;
+                actualParentPort = 'outlet'; // Overgange har altid sit flow ud gennem 'outlet'
+            }
+
+            // 3. Tilføj selve komponenten til det opdaterede parent-link
+            stateManager.addSystemComponent(component, actualParentId, actualParentPort, 'inlet');
         } else {
+            // Tilføj som root-node (første komponent i systemet)
             stateManager.addSystemComponent(component);
         }
 
@@ -1387,6 +1400,14 @@ window.handleInlineComponentSubmit = function (event) {
         ui.updateUndoRedoUI(canUndo(), canRedo());
     }
 }
+
+        // 2. Indsæt komponenten, som brugeren rent faktisk bad om
+        addSystemComponent(newComp, actualParentId);
+
+        // 3. Genberegn systemet og opdater UI
+        if (typeof window.recalculateSystem === 'function') {
+            window.recalculateSystem();
+        }
 
 // --- Initialization ---
 

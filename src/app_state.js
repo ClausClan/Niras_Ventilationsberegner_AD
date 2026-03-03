@@ -1,3 +1,5 @@
+
+import { generateSmartTransition } from './utils.js';
 // --- State Management with Undo/Redo & Persistence ---
 
 const STORAGE_KEY = 'niras_vent_current_project';
@@ -401,8 +403,6 @@ class StateManager {
         window.dispatchEvent(new CustomEvent('stateChanged', { detail: this.state }));
     }
 }
-
-import { generateSmartTransition } from './utils.js';
 
 // ... inde i din funktion hvor du tilføjer en ny komponent:
 const parentComp = stateManager.getSystemComponent(parentId);
