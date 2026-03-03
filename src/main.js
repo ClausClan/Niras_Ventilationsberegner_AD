@@ -1289,15 +1289,14 @@ function recalculateSystem() {
 window.recalculateSystem = recalculateSystem;
 
 
-function handleAddSystemComponent(event) {
+window.handleAddSystemComponent = function(event) {
     if (event) event.preventDefault();
     if (typeof handleAddComponent === 'function') {
         handleAddComponent(event);
     } else if (typeof window.handleAddComponent === 'function') {
         window.handleAddComponent(event);
     }
-}
-window.handleAddSystemComponent = handleAddSystemComponent;
+};
 
 // --- New Inline Form Submit Logic (Phase 15.4) ---
 window.handleInlineComponentSubmit = function (event) {
