@@ -1413,8 +1413,22 @@ async function initializeApp() {
         const el = document.getElementById(id);
         if (el) el.addEventListener('change', window.recalculateSystem);
     });
-    const flowRadios = document.getElementsByName('systemFlowType');
-    if (flowRadios) flowRadios.forEach(r => r.addEventListener('change', window.recalculateSystem));
+
+// Håndtering af Systemtype (Indblæsning/Udsugning)
+const flowRadios = document.querySelectorAll('input[name="systemFlowType"]');
+flowRadios.forEach(radio => {
+    radio.addEventListener('change', (e) => {
+        if (e.target.checked) {
+            // 1. Opdater staten via stateManager's indbyggede metode
+            stateManager.setProjectParams({ systemType: e.target.value });
+            
+            // 2. Kør systemets genberegning
+            if (typeof window.recalculateSystem === 'function') {
+                window.recalculateSystem();
+            }
+        }
+    });
+});
 
     document.getElementById('fileLoader').addEventListener('change', window.loadSystem);
 

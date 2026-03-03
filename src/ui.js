@@ -1,4 +1,4 @@
-
+import { stateManager } from './app_state.js';
 import { formatLocalFloat, parseLocalFloat } from './utils.js';
 import { getFittings, getSystemComponents, getDuctResult, getSystemComponent } from './app_state.js';
 import { STANDARD_ROUND_SIZES_MM, STANDARD_RECT_SIZES_MM, getAirProperties } from './physics.js';
