@@ -3,6 +3,7 @@ import { parseLocalFloat, getInternalDim, formatLocalFloat } from './utils.js?v=
 import * as physics from './physics.js?v=3';
 import * as diagram from './diagram.js?v=3';
 import * as ui from './ui.js?v=3';
+import { generateSmartTransition } from './utils.js';
 
 import {
     addSystemComponent, deleteSystemComponent,
@@ -1288,10 +1289,13 @@ function recalculateSystem() {
 window.recalculateSystem = recalculateSystem;
 
 
-// --- New Inline Form Submit Logic (Phase 15.4) ---
 function handleAddSystemComponent(event) {
     if (event) event.preventDefault();
-    handleAddComponent(event);
+    if (typeof handleAddComponent === 'function') {
+        handleAddComponent(event);
+    } else if (typeof window.handleAddComponent === 'function') {
+        window.handleAddComponent(event);
+    }
 }
 window.handleAddSystemComponent = handleAddSystemComponent;
 
@@ -1400,7 +1404,9 @@ window.handleInlineComponentSubmit = function (event) {
         ui.showSaveStatus('Komponent tilføjet', 'saved');
         ui.updateUndoRedoUI(canUndo(), canRedo());
     }
-}
+};
+
+
 // --- Initialization ---
 
 async function initializeApp() {
