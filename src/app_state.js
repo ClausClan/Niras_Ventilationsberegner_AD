@@ -402,6 +402,26 @@ class StateManager {
     }
 }
 
+import { generateSmartTransition } from './utils.js';
+
+// ... inde i din funktion hvor du tilføjer en ny komponent:
+const parentComp = stateManager.getSystemComponent(parentId);
+
+// Generer den smarte overgang. Funktionen returnerer 'null' hvis de passer perfekt sammen.
+const smartTransition = generateSmartTransition(parentComp, newComponent);
+
+if (smartTransition) {
+    // 1. Indsæt overgangen i træet først (forbundet til parent)
+    stateManager.addSystemComponent(smartTransition, parentId);
+    
+    // 2. Opdater parentId, så den NYE komponent (newComponent) hægtes på overgangens outlet
+    parentId = smartTransition.id;
+}
+
+// 3. Indsæt den egentlige nye komponent
+stateManager.addSystemComponent(newComponent, parentId);
+
+
 // Singleton Instance
 export const stateManager = new StateManager();
 
