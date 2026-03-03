@@ -1288,14 +1288,7 @@ function recalculateSystem() {
 window.recalculateSystem = recalculateSystem;
 
 
-function handleAddSystemComponent(event) {
-    if (event) event.preventDefault();
-    handleAddComponent(event);
-}
-window.handleAddSystemComponent = handleAddSystemComponent;
-
 // --- New Inline Form Submit Logic (Phase 15.4) ---
-// Exposed handler for Add button (Legacy / Global approach fallback if needed)
 function handleAddSystemComponent(event) {
     if (event) event.preventDefault();
     handleAddComponent(event);
