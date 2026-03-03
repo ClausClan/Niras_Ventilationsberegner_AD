@@ -1413,23 +1413,23 @@ async function initializeApp() {
         const el = document.getElementById(id);
         if (el) el.addEventListener('change', window.recalculateSystem);
     });
+
+// Håndtering af Systemtype (Indblæsning/Udsugning)
 const flowRadios = document.querySelectorAll('input[name="systemFlowType"]');
 flowRadios.forEach(radio => {
     radio.addEventListener('change', (e) => {
         if (e.target.checked) {
-            // 1. Synkroniser App State med DOM'en FØR beregningen kører
-            // (Sørg for at 'window.appState' peger på din faktiske state-variabel)
-            if (window.appState) {
-                window.appState.systemFlowType = e.target.value; 
-            }
+            // 1. Opdater staten via stateManager's indbyggede metode
+            stateManager.setProjectParams({ systemType: e.target.value });
             
-            // 2. Nu hvor staten er 'merging' (udsugning) eller 'splitting' (indblæsning), genberegner vi
+            // 2. Kør systemets genberegning
             if (typeof window.recalculateSystem === 'function') {
                 window.recalculateSystem();
             }
         }
     });
 });
+
     document.getElementById('fileLoader').addEventListener('change', window.loadSystem);
 
     // --- Project Management UI ---
