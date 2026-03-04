@@ -537,10 +537,6 @@ function getFittingData(suffix, typeOverride = null) {
         return el ? el.value : '';
     };
     const f = (id) => parseLocalFloat(s(id));
-    const radio = (n) => {
-        const el = document.querySelector(`input[name="${n}${suffix}"]:checked`);
-        return el ? el.value : null;
-    };
 
     const orientation = s('sys_orientation');
     if (orientation) properties.orientation = orientation;
@@ -579,26 +575,26 @@ function getFittingData(suffix, typeOverride = null) {
             const isSym = fittingType === 'tee_sym';
             const isBullhead = fittingType === 'tee_bullhead';
 
+            // Uanset hvilken type T-stykke (inkl. bullhead), mapper vi dem til at have 
+            // d_in (main), d_straight (port 1), d_branch (port 2) så de kan indgå i træet uden valg af retning.
             if (isBullhead) {
-                properties.path = radio('sysTeePath'); 
-                properties.q_out1 = f('sys_tee_q_out1');
-                properties.q_out2 = f('sys_tee_q_out2');
                 properties.d_in = f('sys_tee_d_in');
-                properties.d_out1 = f('sys_tee_d_out1');
-                properties.d_out2 = f('sys_tee_d_out2');
+                properties.d_straight = f('sys_tee_d_out1');
+                properties.d_branch = f('sys_tee_d_out2');
+                properties.q_straight = f('sys_tee_q_out1');
+                properties.q_branch = f('sys_tee_q_out2');
 
-                name = properties.path === 'path1' ? `Dobbelt T (Gren 1)` : `Dobbelt T (Gren 2)`;
-                details = `Ø${properties.d_in} -> Ø${properties.d_out1}/Ø${properties.d_out2}`;
+                name = `Dobbelt T-stykke (Bullhead)`;
+                details = `Ind: Ø${properties.d_in} -> Afgr 1: Ø${properties.d_straight}, Afgr 2: Ø${properties.d_branch}`;
             } else {
-                properties.flowType = radio('sysTeeFlowType') || 'splitting'; 
-                properties.path = radio('sysTeePath'); 
                 properties.d_in = f('sys_tee_d_in');
                 properties.d_straight = isSym ? properties.d_in : f('sys_tee_d_straight');
                 properties.d_branch = isSym ? properties.d_in : f('sys_tee_d_branch');
-
                 properties.q_straight = f('sys_tee_q_straight');
                 properties.q_branch = f('sys_tee_q_branch');
-                name = properties.path === 'straight' ? `T-stykke (Ligeud)` : `T-stykke (Afgrening)`;
+                
+                name = isSym ? `T-stykke Sym. Ø${properties.d_in}` : `T-stykke Asym.`;
+                details = `Ligeud: Ø${properties.d_straight}, Afgr: Ø${properties.d_branch}`;
             }
             break;
         }
@@ -799,115 +795,126 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
 
             calculationDetails = { A_m2: A_ref, v_ms: v, zeta, Pdyn_Pa };
 
-        } else if (p.type === 'tee_sym' || p.type === 'tee_asym') {
-            inletDim = { shape: 'round', d: p.d_in };
+        } else if (p.type === 'tee_sym' || p.type === 'tee_asym' || p.type === 'tee_bullhead') {
+            const isMerging = globalParams.globalFlowType === 'merging';
+            const isBullhead = p.type === 'tee_bullhead';
 
-            const L_in = p.d_in / 1000;
+            const d_main = p.d_in || 0;
+            const d_b1 = p.d_straight || 0;
+            const d_b2 = p.d_branch || 0;
+
+            inletDim = { shape: 'round', d: d_main };
+
+            const L_in = d_main / 1000;
             const perim_in = Math.PI * L_in;
-            const L_st = p.d_straight / 1000;
-            const perim_st = Math.PI * L_st;
-            const L_br = p.d_branch / 1000;
-            const perim_br = Math.PI * L_br;
+            const L_b1 = d_b1 / 1000;
+            const perim_b1 = Math.PI * L_b1;
+            const L_b2 = d_b2 / 1000;
+            const perim_b2 = Math.PI * L_b2;
 
-            const isMerging = p.flowType === 'merging' || globalParams.globalFlowType === 'merging';
+            // Opfang flow pr. gren via properties sat i UI. Har de ingen værdi endnu, deles flow 50/50.
+            let q_b1 = p.q_straight;
+            let q_b2 = p.q_branch;
 
+            if (q_b1 == null) q_b1 = (incomingFlow || 0) / 2;
+            if (q_b2 == null) q_b2 = (incomingFlow || 0) / 2;
+
+            // Forholdsmæssig justering, så flow-balancen passer med incomingFlow fra træet
+            if (incomingFlow > 0 && Math.abs((q_b1 + q_b2) - incomingFlow) > 1) {
+                const ratio = incomingFlow / (q_b1 + q_b2);
+                q_b1 *= ratio;
+                q_b2 *= ratio;
+            }
+
+            let loss_b1 = 0, loss_b2 = 0;
+            let details_b1 = {}, details_b2 = {};
+
+            if (isBullhead) {
+                if (isMerging) {
+                    const res = physics.calculateConvergingBullheadTeeLoss({ q_in1: q_b1, q_in2: q_b2 }, { d_in1: d_b1, d_in2: d_b2, d_common: d_main }, RHO);
+                    loss_b1 = res.loss1 || 0; loss_b2 = res.loss2 || 0;
+                    details_b1 = res.details1 || {}; details_b2 = res.details2 || {};
+                } else {
+                    const res = physics.calculateBullheadTeeLoss({ q_in: incomingFlow, q_out1: q_b1, q_out2: q_b2 }, { d_in: d_main, d_out1: d_b1, d_out2: d_b2 }, RHO);
+                    loss_b1 = res.loss1 || 0; loss_b2 = res.loss2 || 0;
+                    details_b1 = res.details1 || {}; details_b2 = res.details2 || {};
+                }
+            } else {
+                if (isMerging) {
+                    const res = physics.calculateConvergingTeePressureLoss({ q_straight: q_b1, q_branch: q_b2 }, { d_common: d_main, d_straight: d_b1, d_branch: d_b2 }, RHO);
+                    loss_b1 = res.loss_straight || 0; loss_b2 = res.loss_branch || 0;
+                    details_b1 = res.details_straight || {}; details_b2 = res.details_branch || {};
+                } else {
+                    const res = physics.calculateTeePressureLoss({ q_in: incomingFlow, q_straight: q_b1, q_branch: q_b2 }, { d_in: d_main, d_straight: d_b1, d_branch: d_b2 }, RHO);
+                    loss_b1 = res.loss_straight || 0; loss_b2 = res.loss_branch || 0;
+                    details_b1 = res.details_straight || {}; details_b2 = res.details_branch || {};
+                }
+            }
+
+            // Termodynamik for T-stykker
             if (!isMerging) {
                 if (calculateThermodynamicsFlag) {
                     const thermo_in = physics.calculateTemperatureDrop(incomingTemp, compAmbient, L_in, perim_in, q_m, isoThick, isoLambda, globalParams.globalRH);
                     const t_mid = thermo_in.t_out;
                     let totalLoss = thermo_in.q_loss;
 
-                    const q_m_st = (p.q_straight / 3600) * RHO;
-                    const thermo_st = physics.calculateTemperatureDrop(t_mid, compAmbient, L_st, perim_st, q_m_st, isoThick, isoLambda, globalParams.globalRH);
-                    totalLoss += thermo_st.q_loss;
+                    const q_m_b1 = (q_b1 / 3600) * RHO;
+                    const thermo_b1 = physics.calculateTemperatureDrop(t_mid, compAmbient, L_b1, perim_b1, q_m_b1, isoThick, isoLambda, globalParams.globalRH);
+                    totalLoss += thermo_b1.q_loss;
 
-                    const q_m_br = (p.q_branch / 3600) * RHO;
-                    const thermo_br = physics.calculateTemperatureDrop(t_mid, compAmbient, L_br, perim_br, q_m_br, isoThick, isoLambda, globalParams.globalRH);
-                    totalLoss += thermo_br.q_loss;
+                    const q_m_b2 = (q_b2 / 3600) * RHO;
+                    const thermo_b2 = physics.calculateTemperatureDrop(t_mid, compAmbient, L_b2, perim_b2, q_m_b2, isoThick, isoLambda, globalParams.globalRH);
+                    totalLoss += thermo_b2.q_loss;
 
                     q_loss_val = totalLoss;
-                    temp_out = { 'outlet_straight': thermo_st.t_out, 'outlet_branch': thermo_br.t_out, 'outlet': (p.path === 'straight' ? thermo_st.t_out : thermo_br.t_out) };
+                    temp_out = { 'outlet_straight': thermo_b1.t_out, 'outlet_branch': thermo_b2.t_out, 'outlet': thermo_b1.t_out };
                 } else {
                     temp_out = { 'outlet_straight': incomingTemp, 'outlet_branch': incomingTemp, 'outlet': incomingTemp };
                 }
-
-                const results = physics.calculateTeePressureLoss({ q_in: incomingFlow, q_straight: p.q_straight, q_branch: p.q_branch }, { d_in: p.d_in, d_straight: p.d_straight, d_branch: p.d_branch }, RHO);
-                if (p.path === 'straight') {
-                    pressureLoss = results.loss_straight;
-                    outletDim = { shape: 'round', d: p.d_straight };
-                    airflow_out = { 'outlet_straight': p.q_straight, 'outlet_branch': p.q_branch, 'outlet': p.q_straight };
-                    calculationDetails = results.details_straight;
-                } else {
-                    pressureLoss = results.loss_branch;
-                    outletDim = { shape: 'round', d: p.d_branch };
-                    airflow_out = { 'outlet_straight': p.q_straight, 'outlet_branch': p.q_branch, 'outlet': p.q_branch };
-                    calculationDetails = results.details_branch;
-                }
-            } else { // Merging
+            } else {
                 if (calculateThermodynamicsFlag) {
-                    const t_in_st = (p.path === 'straight') ? incomingTemp : globalParams.systemTemp;
-                    const t_in_br = (p.path === 'branch') ? incomingTemp : globalParams.systemTemp;
+                    const t_in_b1 = incomingTemp; 
+                    const t_in_b2 = incomingTemp; 
 
-                    const rho_st = physics.getAirProperties(t_in_st).RHO;
-                    const rho_br = physics.getAirProperties(t_in_br).RHO;
+                    const rho_b1 = physics.getAirProperties(t_in_b1).RHO;
+                    const rho_b2 = physics.getAirProperties(t_in_b2).RHO;
 
-                    const q_m_st = (p.q_straight / 3600) * rho_st;
-                    const thermo_st = physics.calculateTemperatureDrop(t_in_st, compAmbient, L_st, perim_st, q_m_st, isoThick, isoLambda, globalParams.globalRH);
+                    const q_m_b1 = (q_b1 / 3600) * rho_b1;
+                    const thermo_b1 = physics.calculateTemperatureDrop(t_in_b1, compAmbient, L_b1, perim_b1, q_m_b1, isoThick, isoLambda, globalParams.globalRH);
 
-                    const q_m_br = (p.q_branch / 3600) * rho_br;
-                    const thermo_br = physics.calculateTemperatureDrop(t_in_br, compAmbient, L_br, perim_br, q_m_br, isoThick, isoLambda, globalParams.globalRH);
+                    const q_m_b2 = (q_b2 / 3600) * rho_b2;
+                    const thermo_b2 = physics.calculateTemperatureDrop(t_in_b2, compAmbient, L_b2, perim_b2, q_m_b2, isoThick, isoLambda, globalParams.globalRH);
 
-                    const q_m_total = q_m_st + q_m_br;
-                    const t_mixed = q_m_total > 0 ? ((q_m_st * thermo_st.t_out + q_m_br * thermo_br.t_out) / q_m_total) : incomingTemp;
+                    const q_m_total = q_m_b1 + q_m_b2;
+                    const t_mixed = q_m_total > 0 ? ((q_m_b1 * thermo_b1.t_out + q_m_b2 * thermo_b2.t_out) / q_m_total) : incomingTemp;
 
                     const thermo_out = physics.calculateTemperatureDrop(t_mixed, compAmbient, L_in, perim_in, q_m, isoThick, isoLambda, globalParams.globalRH);
 
-                    q_loss_val = thermo_st.q_loss + thermo_br.q_loss + thermo_out.q_loss;
-                    temp_out = { 'outlet': thermo_out.t_out, 'outlet_straight': t_in_st, 'outlet_branch': t_in_br };
+                    q_loss_val = thermo_b1.q_loss + thermo_b2.q_loss + thermo_out.q_loss;
+                    temp_out = { 'outlet': thermo_out.t_out, 'outlet_straight': t_in_b1, 'outlet_branch': t_in_b2 };
                 } else {
                     temp_out = { 'outlet': incomingTemp, 'outlet_straight': incomingTemp, 'outlet_branch': incomingTemp };
                 }
-
-                let q_s = p.q_straight || ((incomingFlow || 0) / 2);
-                let q_b = p.q_branch || ((incomingFlow || 0) / 2);
-
-                if (Math.abs((q_s + q_b) - incomingFlow) > 1 && incomingFlow > 0) {
-                    const ratio = incomingFlow / (q_s + q_b);
-                    q_s *= ratio;
-                    q_b *= ratio;
-                }
-
-                const results = physics.calculateConvergingTeePressureLoss({ q_straight: q_s, q_branch: q_b }, { d_common: p.d_in, d_straight: p.d_straight, d_branch: p.d_branch }, RHO);
-                if (p.path === 'straight') {
-                    pressureLoss = results.loss_straight || 0;
-                    calculationDetails = results.details_straight || {};
-                    inletDim = { shape: 'round', d: p.d_straight };
-                } else {
-                    pressureLoss = results.loss_branch || 0;
-                    calculationDetails = results.details_branch || {};
-                    inletDim = { shape: 'round', d: p.d_branch };
-                }
-                outletDim = { shape: 'round', d: p.d_in };
-
-                airflow_out = { 'outlet_straight': q_s, 'outlet_branch': q_b, 'outlet': q_s }; 
             }
-            v = calculationDetails.v_ms || 0;
-        }
 
-        newCalc = {
-            airflow_in: incomingFlow,
-            airflow_out: airflow_out,
-            velocity: v,
-            pressureLoss: pressureLoss,
-            zeta: zeta,
-            inletDimension: inletDim, 
-            inletDimensions: { 'straight': { shape: 'round', d: p.d_main || p.d }, 'branch': { shape: 'round', d: p.d_branch } }, 
-            outletDimension: { 'outlet': outletDim },
-            calculationDetails: calculationDetails,
-            temperature_in: incomingTemp,
-            temperature_out: temp_out,
-            heatLoss: q_loss_val
-        };
+            v = Math.max(details_b1.v_ms || 0, details_b2.v_ms || 0);
+
+            newCalc = {
+                airflow_in: incomingFlow,
+                airflow_out: { 'outlet_straight': q_b1, 'outlet_branch': q_b2, 'outlet': incomingFlow },
+                velocity: v,
+                pressureLoss: Math.max(loss_b1, loss_b2), // Fallback for forældet single-value UI
+                portPressureLoss: { 'outlet_straight': loss_b1, 'outlet_branch': loss_b2 }, // Ny standard for graf-baseret kritisk vej
+                zeta: Math.max(details_b1.zeta || 0, details_b2.zeta || 0),
+                inletDimension: inletDim, 
+                inletDimensions: { 'straight': { shape: 'round', d: d_b1 }, 'branch': { shape: 'round', d: d_b2 } }, 
+                outletDimension: { 'outlet_straight': { shape: 'round', d: d_b1 }, 'outlet_branch': { shape: 'round', d: d_b2 } },
+                calculationDetails: { straight: details_b1, branch: details_b2 },
+                temperature_in: incomingTemp,
+                temperature_out: temp_out,
+                heatLoss: q_loss_val
+            };
+        }
     }
 
     return newCalc;
@@ -1131,12 +1138,12 @@ function recalculateSystem() {
                     branchTemps[outPort] = traverseAndCalculateThermodynamics(childId, null);
                 });
 
-                if (comp.type === 'tee_sym' || comp.type === 'tee_asym') {
+                if (comp.type === 'tee_sym' || comp.type === 'tee_asym' || comp.type === 'tee_bullhead') {
                     const temp_straight = branchTemps['outlet_straight'] !== undefined ? branchTemps['outlet_straight'] : incomingTemp;
                     const temp_branch = branchTemps['outlet_branch'] !== undefined ? branchTemps['outlet_branch'] : incomingTemp;
 
-                    const q_straight = comp.properties.q_straight || 0;
-                    const q_branch = comp.properties.q_branch || 0;
+                    const q_straight = comp.properties.q_straight !== undefined ? comp.properties.q_straight : (comp.properties.q_out1 || 0);
+                    const q_branch = comp.properties.q_branch !== undefined ? comp.properties.q_branch : (comp.properties.q_out2 || 0);
 
                     if (q_straight === 0 && q_branch === 0) {
                         enteringTemp = temp_straight;
