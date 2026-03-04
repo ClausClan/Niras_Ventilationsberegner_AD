@@ -780,9 +780,6 @@ export function updateConstraintDefaults() {
     const unitWrapper = constraintValueInput.parentElement;
 
     if (constraintTypeSelect.value === 'velocity') {
-        // Only update if value is the default processing one to avoid overwriting user input too aggressively, 
-        // or just set it as the user expects from the old app (always reset).
-        // The old app always reset it:
         constraintValueInput.value = '5';
         unitWrapper.dataset.unit = 'm/s';
     } else { // pressure
@@ -1032,7 +1029,7 @@ export function renderFittingInputs() {
                     <div id="geo_input_container"></div>`;
                 break;
             case 'expansion_rect':
-                illustrationSvg = `<img src="./public/icons/expansion_rect.svg" alt="Rektangulær Expansion" style="max-width:100%; height:auto;">`;
+                illustrationSvg = `<img src="./public/icons/expansion_rect.svg" alt="Rektangulær Udvidelse" style="max-width:100%; height:auto;">`;
                 inputsHtml = commonAirflowInput + `
                     <div class="input-field-group">
                         <div class="input-group"><label for="h1">Højde Ind (H₁)</label><select id="h1" class="input-field">${rectOptions}</select></div>
@@ -1049,7 +1046,7 @@ export function renderFittingInputs() {
                     <div id="geo_input_container"></div>`;
                 break;
             case 'contraction_rect':
-                illustrationSvg = `<img src="./public/icons/contraction_rect.svg" alt="Rektangulær Contraction" style="max-width:100%; height:auto;">`;
+                illustrationSvg = `<img src="./public/icons/contraction_rect.svg" alt="Rektangulær Indsnævring" style="max-width:100%; height:auto;">`;
                 inputsHtml = commonAirflowInput + `
                     <div class="input-field-group">
                         <div class="input-group"><label for="h1">Højde Ind (H₁)</label><select id="h1" class="input-field">${rectOptions}</select></div>
@@ -1067,6 +1064,11 @@ export function renderFittingInputs() {
                 break;
             case 'transition_round_rect':
             case 'transition_rect_round':
+                if (type === 'transition_round_rect') {
+                    illustrationSvg = `<img src="./public/icons/transition_round_rect.svg" alt="Overgang Rund til Firkant" style="max-width:100%; height:auto;">`;
+                } else {
+                    illustrationSvg = `<img src="./public/icons/transition_rect_round.svg" alt="Overgang Firkant til Rund" style="max-width:100%; height:auto;">`;
+                }
                 inputsHtml = commonAirflowInput + `
                     <div class="input-field-group">
                         <div class="input-group"><label for="d">Diameter (d)</label><input type="text" id="d" class="input-field" list="diameter-list"></div>
@@ -1117,7 +1119,14 @@ export function handleComponentTypeChange() {
             <div class="input-group"><label for="systemFittingType">Vælg type formstykke</label><select id="systemFittingType" class="input-field">
                 <option value="">-- Vælg type --</option>
                 <optgroup label="Bøjninger"><option value="bend_circ">Bøjning, Cirkulær</option><option value="bend_rect">Bøjning, Rektangulær</option></optgroup>
-                <optgroup label="Dimensionsændringer"><option value="expansion">Udvidelse</option><option value="contraction">Indsnævring</option></optgroup>
+                <optgroup label="Dimensionsændringer">
+                    <option value="expansion">Udvidelse, Cirkulær</option>
+                    <option value="contraction">Indsnævring, Cirkulær</option>
+                    <option value="expansion_rect">Udvidelse, Rektangulær</option>
+                    <option value="contraction_rect">Indsnævring, Rektangulær</option>
+                    <option value="transition_rect_round">Overgang, Firkant til Rund</option>
+                    <option value="transition_round_rect">Overgang, Rund til Firkant</option>
+                </optgroup>
                 <optgroup label="T-stykker (Cirkulær)"><option value="tee_sym">T-stykke, Symmetrisk</option><option value="tee_asym">T-stykke, Asymmetrisk</option><option value="tee_bullhead">T-stykke (Dobbelt Afgrening)</option></optgroup>
             </select></div>
             <div id="systemFittingInputsContainer"></div>`;
@@ -1271,6 +1280,31 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                     <div class="input-group"><label for="${id('sys_angle_dim')}">Vinkel (α)</label><input type="text" id="${id('sys_angle_dim')}" class="input-field" value="30"></div>
                 </div>`;
             break;
+        case 'expansion_rect':
+        case 'contraction_rect':
+            inputsHtml = `
+                <div class="input-field-group">
+                    <div class="input-group"><label for="${id('sys_h1')}">Højde Ind (H₁)</label><select id="${id('sys_h1')}" class="input-field">${rectOptions}</select></div>
+                    <div class="input-group"><label for="${id('sys_w1')}">Bredde Ind (B₁)</label><select id="${id('sys_w1')}" class="input-field">${rectOptions}</select></div>
+                </div>
+                <div class="input-field-group">
+                    <div class="input-group"><label for="${id('sys_h2')}">Højde Ud (H₂)</label><select id="${id('sys_h2')}" class="input-field">${rectOptions}</select></div>
+                    <div class="input-group"><label for="${id('sys_w2')}">Bredde Ud (B₂)</label><select id="${id('sys_w2')}" class="input-field">${rectOptions}</select></div>
+                </div>
+                <div class="input-group"><label for="${id('sys_angle_dim')}">Vinkel (α)</label><input type="text" id="${id('sys_angle_dim')}" class="input-field" value="30"></div>`;
+            break;
+        case 'transition_round_rect':
+        case 'transition_rect_round':
+            inputsHtml = `
+                <div class="input-field-group">
+                    <div class="input-group"><label for="${id('sys_d')}">Diameter (d)</label><select id="${id('sys_d')}" class="input-field">${roundOptions}</select></div>
+                </div>
+                <div class="input-field-group">
+                    <div class="input-group"><label for="${id('sys_h')}">Højde (H)</label><select id="${id('sys_h')}" class="input-field">${rectOptions}</select></div>
+                    <div class="input-group"><label for="${id('sys_w')}">Bredde (B)</label><select id="${id('sys_w')}" class="input-field">${rectOptions}</select></div>
+                </div>
+                <div class="input-group"><label for="${id('sys_angle_dim')}">Vinkel (α)</label><input type="text" id="${id('sys_angle_dim')}" class="input-field" value="30"></div>`;
+            break;
         case 'tee_sym':
         case 'tee_asym': {
             // ALTID BRUG DEN NYE RETNINGSLØSE UI I SYSTEM-BUILDEREN
@@ -1364,13 +1398,24 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
         if (p.h) setVal(id('sys_h'), p.h);
         if (p.w) setVal(id('sys_w'), p.w);
         if (p.rh) setVal(id('sys_rh'), p.rh);
+        
+        // Rektangulær udvidelse inputs
+        if (p.h1) setVal(id('sys_h1'), p.h1);
+        if (p.w1) setVal(id('sys_w1'), p.w1);
+        if (p.h2) setVal(id('sys_h2'), p.h2);
+        if (p.w2) setVal(id('sys_w2'), p.w2);
+
+        // Cirkulær udvidelse inputs
         if (p.d1) setVal(id('sys_d1'), p.d1);
         if (p.d2) setVal(id('sys_d2'), p.d2);
+        
         if (p.d_in) setVal(id('sys_tee_d_in'), p.d_in);
         if (p.d_straight) setVal(id('sys_tee_d_straight'), p.d_straight);
         if (p.d_branch) setVal(id('sys_tee_d_branch'), p.d_branch);
-        if (p.d_out1) setVal(id('sys_tee_d_out1'), p.d_out1);
-        if (p.d_out2) setVal(id('sys_tee_d_out2'), p.d_out2);
+        if (p.d_straight) setVal(id('sys_tee_d_out1'), p.d_straight);
+        if (p.d_branch) setVal(id('sys_tee_d_out2'), p.d_branch);
+        if (p.q_straight) setVal(id('sys_tee_q_out1'), p.q_straight);
+        if (p.q_branch) setVal(id('sys_tee_q_out2'), p.q_branch);
         if (p.orientation) setVal(id('sys_orientation'), p.orientation);
 
         if (p.ambientTemp !== undefined) setVal(id('sys_ambient'), p.ambientTemp);
@@ -1439,7 +1484,7 @@ export function showEditForm(id) {
 
     if (component.type === 'straightDuct') {
         renderSystemDuctInputs(container, component);
-    } else if (component.type === 'fitting' || component.type.startsWith('bend') || component.type.startsWith('tee') || component.type.startsWith('expansion') || component.type.startsWith('contraction')) {
+    } else if (component.type === 'fitting' || component.type.startsWith('bend') || component.type.startsWith('tee') || component.type.startsWith('expansion') || component.type.startsWith('contraction') || component.type.startsWith('transition')) {
         // We use renderSystemFittingInputs which handles type based on initialData
         renderSystemFittingInputs(container, component);
     } else if (component.type === 'manualLoss') {
@@ -1560,9 +1605,23 @@ export function handleInlineComponentTypeChange(containerId) {
         container.innerHTML = `
             <div class="input-group"><label for="inlineFittingType">Vælg type formstykke</label><select id="inlineFittingType" class="input-field">
                 <option value="">-- Vælg type --</option>
-                <optgroup label="Bøjninger"><option value="bend_circ">Bøjning, Cirkulær</option><option value="bend_rect">Bøjning, Rektangulær</option></optgroup>
-                <optgroup label="Dimensionsændringer"><option value="expansion">Udvidelse</option><option value="contraction">Indsnævring</option></optgroup>
-                <optgroup label="T-stykker (Cirkulær)"><option value="tee_sym">T-stykke, Symmetrisk</option><option value="tee_asym">T-stykke, Asymmetrisk</option><option value="tee_bullhead">T-stykke (Dobbelt Afgrening)</option></optgroup>
+                <optgroup label="Bøjninger">
+                    <option value="bend_circ">Bøjning, Cirkulær</option>
+                    <option value="bend_rect">Bøjning, Rektangulær</option>
+                </optgroup>
+                <optgroup label="Dimensionsændringer">
+                    <option value="expansion">Udvidelse, Cirkulær</option>
+                    <option value="contraction">Indsnævring, Cirkulær</option>
+                    <option value="expansion_rect">Udvidelse, Rektangulær</option>
+                    <option value="contraction_rect">Indsnævring, Rektangulær</option>
+                    <option value="transition_rect_round">Overgang, Firkant til Rund</option>
+                    <option value="transition_round_rect">Overgang, Rund til Firkant</option>
+                </optgroup>
+                <optgroup label="T-stykker (Cirkulær)">
+                    <option value="tee_sym">T-stykke, Symmetrisk</option>
+                    <option value="tee_asym">T-stykke, Asymmetrisk</option>
+                    <option value="tee_bullhead">T-stykke (Dobbelt Afgrening)</option>
+                </optgroup>
             </select></div>
             <div id="inlineFittingInputsContainer"></div>`;
 
@@ -1589,6 +1648,7 @@ export function handleInlineComponentTypeChange(containerId) {
         <button type="button" class="button primary" onclick="window.handleInlineComponentSubmit(event)">Tilføj til System</button>`;
     }
 }
+
 
 // Expose handlers globally for inline HTML strings
 window.showAddForm = showAddForm;

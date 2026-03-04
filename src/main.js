@@ -578,6 +578,7 @@ function getFittingData(suffix, typeOverride = null) {
     if (!fittingType) return null;
 
     let name, details, properties = { type: fittingType };
+    let rootProps = {}; // VIGTIGT: Sikrer diagrammet forstår 3D-formen
 
     const s = (id) => {
         const el = document.getElementById(id + suffix);
@@ -598,6 +599,7 @@ function getFittingData(suffix, typeOverride = null) {
             properties.rd = f('sys_rd');
             name = `Bøjning Cirk. Ø${properties.d}`;
             details = `${properties.angle}° R=${properties.rd * properties.d}mm`;
+            rootProps = { shape: 'circular', diameter: properties.d };
             break;
         }
         case 'bend_rect': {
@@ -607,6 +609,7 @@ function getFittingData(suffix, typeOverride = null) {
             properties.rh = f('sys_rh');
             name = `Bøjning Rekt. ${properties.h}x${properties.w}`;
             details = `${properties.angle}°`;
+            rootProps = { shape: 'rectangular', height: properties.h, width: properties.w };
             break;
         }
         case 'expansion':
@@ -616,6 +619,36 @@ function getFittingData(suffix, typeOverride = null) {
             properties.d2 = f('sys_d2');
             properties.angle = f('sys_angle_dim');
             name = isExpansion ? `Udvidelse Ø${properties.d1} -> Ø${properties.d2}` : `Indsnævring Ø${properties.d1} -> Ø${properties.d2}`;
+            details = `${properties.angle}°`;
+            rootProps = { shape: 'circular', shapeOut: 'circular', diameter: properties.d1, diameterOut: properties.d2, length: 500 };
+            break;
+        }
+        case 'expansion_rect':
+        case 'contraction_rect': {
+            const isExpansion = fittingType === 'expansion_rect';
+            properties.h1 = f('sys_h1');
+            properties.w1 = f('sys_w1');
+            properties.h2 = f('sys_h2');
+            properties.w2 = f('sys_w2');
+            properties.angle = f('sys_angle_dim'); 
+            name = isExpansion ? `Udvidelse Rekt. ${properties.h1}x${properties.w1} -> ${properties.h2}x${properties.w2}` : `Indsnævring Rekt. ${properties.h1}x${properties.w1} -> ${properties.h2}x${properties.w2}`;
+            details = `${properties.angle}°`;
+            rootProps = { shape: 'rectangular', shapeOut: 'rectangular', height: properties.h1, width: properties.w1, heightOut: properties.h2, widthOut: properties.w2, length: 500 };
+            break;
+        }
+        case 'transition_round_rect':
+        case 'transition_rect_round': {
+            properties.d = f('sys_d');
+            properties.h = f('sys_h');
+            properties.w = f('sys_w');
+            properties.angle = f('sys_angle_dim');
+            if (fittingType === 'transition_round_rect') {
+                name = `Overgang Ø${properties.d} -> ${properties.h}x${properties.w}`;
+                rootProps = { shape: 'circular', shapeOut: 'rectangular', diameter: properties.d, heightOut: properties.h, widthOut: properties.w, length: 500 };
+            } else {
+                name = `Overgang ${properties.h}x${properties.w} -> Ø${properties.d}`;
+                rootProps = { shape: 'rectangular', shapeOut: 'circular', height: properties.h, width: properties.w, diameterOut: properties.d, length: 500 };
+            }
             details = `${properties.angle}°`;
             break;
         }
@@ -644,6 +677,7 @@ function getFittingData(suffix, typeOverride = null) {
                 name = isSym ? `T-stykke Sym. Ø${properties.d_in}` : `T-stykke Asym.`;
                 details = `Ligeud: Ø${properties.d_straight}, Afgr: Ø${properties.d_branch}`;
             }
+            rootProps = { shape: 'circular', diameter: properties.d_in };
             break;
         }
     }
@@ -659,13 +693,18 @@ function getFittingData(suffix, typeOverride = null) {
     const elIsoLambda = document.getElementById('sys_isoLambda' + suffix);
     if (elIsoLambda && elIsoLambda.value !== '') properties.isoLambda = parseLocalFloat(elIsoLambda.value);
 
-    return {
+    let result = {
         type: fittingType,
         name,
         details,
         properties,
         state: {} 
     };
+    
+    // Inject diagram.js properties to root level so it draws it perfectly!
+    Object.assign(result, rootProps);
+
+    return result;
 }
 
 
@@ -1331,7 +1370,8 @@ window.handleInlineComponentSubmit = function (event) {
                 const pp = parentComp.properties;
                 if (parentComp.type === 'straightDuct') pDim = pp.shape === 'round' ? {shape: 'round', d: pp.d || pp.diameter} : {shape: 'rect', h: pp.h || pp.sideA, w: pp.w || pp.sideB};
                 else if (parentComp.type.startsWith('tee')) pDim = actualParentPort === 'outlet_branch' ? {shape: 'round', d: pp.d_branch} : {shape: 'round', d: pp.d_straight};
-                else if (parentComp.type.includes('expansion') || parentComp.type.includes('contraction')) pDim = {shape: 'round', d: pp.d2};
+                else if (parentComp.type === 'expansion' || parentComp.type === 'contraction') pDim = {shape: 'round', d: pp.d2};
+                else if (parentComp.type === 'expansion_rect' || parentComp.type === 'contraction_rect') pDim = {shape: 'rect', h: pp.h2, w: pp.w2};
                 else if (parentComp.type === 'bend_circ') pDim = {shape: 'round', d: pp.d};
                 else if (parentComp.type === 'bend_rect') pDim = {shape: 'rect', h: pp.h, w: pp.w};
                 else if (parentComp.type === 'transition_round_rect') pDim = {shape: 'rect', h: pp.h, w: pp.w};
@@ -1342,7 +1382,8 @@ window.handleInlineComponentSubmit = function (event) {
             const cp = component.properties;
             if (component.type === 'straightDuct') cDim = cp.shape === 'round' ? {shape: 'round', d: cp.d || cp.diameter} : {shape: 'rect', h: cp.h || cp.sideA, w: cp.w || cp.sideB};
             else if (component.type.startsWith('tee')) cDim = {shape: 'round', d: cp.d_in};
-            else if (component.type.includes('expansion') || component.type.includes('contraction')) cDim = {shape: 'round', d: cp.d1};
+            else if (component.type === 'expansion' || component.type === 'contraction') cDim = {shape: 'round', d: cp.d1};
+            else if (component.type === 'expansion_rect' || component.type === 'contraction_rect') cDim = {shape: 'rect', h: cp.h1, w: cp.w1};
             else if (component.type === 'bend_circ') cDim = {shape: 'round', d: cp.d};
             else if (component.type === 'bend_rect') cDim = {shape: 'rect', h: cp.h, w: cp.w};
             else if (component.type === 'transition_round_rect') cDim = {shape: 'round', d: cp.d};
@@ -1609,7 +1650,7 @@ async function initializeApp() {
     const undoBtn = document.getElementById('undoButton');
     const redoBtn = document.getElementById('redoButton');
     if (undoBtn) undoBtn.addEventListener('click', handleUndo);
-    if (redoBtn) redoBtn.addEventListener('click', handleRedo);
+    if (redoBtn) undoBtn.addEventListener('click', handleRedo);
 
     ui.updateUndoRedoUI(canUndo(), canRedo());
 }
