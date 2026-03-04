@@ -399,7 +399,8 @@ function handleFittingCalculation(event) {
     }
 }
 
-// --- Smart Transition Generator (Visuel Logik Kun) ---
+// --- Smart Transition Generator ---
+// GENSKABT MED FULD FYSIK LOGIK DIREKTE I FUNKTIONEN
 function createTransitionComponent(visualInlet, visualOutlet, airflow, globalFlowType, previousComponent) {
     if (!visualInlet || !visualOutlet) return null;
 
@@ -430,20 +431,52 @@ function createTransitionComponent(visualInlet, visualOutlet, airflow, globalFlo
 
     if (!needsTransition) return null;
 
+    // Areal Beregning (Hvad der blev tegnet)
+    const A1_draw = visualInlet.shape === 'round' ? Math.PI * (getInternalDim(visualInlet.d) / 2000) ** 2 : (getInternalDim(visualInlet.h) / 1000) * (getInternalDim(visualInlet.w) / 1000);
+    const A2_draw = visualOutlet.shape === 'round' ? Math.PI * (getInternalDim(visualOutlet.d) / 2000) ** 2 : (getInternalDim(visualOutlet.h) / 1000) * (getInternalDim(visualOutlet.w) / 1000);
+    
+    // FYSISKE Beregninger (Korrigeret for Udsugning/Indblæsning - Sikrer gennemsigtighed)
+    const isExhaust = globalFlowType === 'merging';
+    const A_flow_in = isExhaust ? A2_draw : A1_draw;
+    const A_flow_out = isExhaust ? A1_draw : A2_draw;
+
+    const isPhysicalExpansion = A_flow_out > A_flow_in;
+    const area_ratio = isPhysicalExpansion ? (A_flow_in / A_flow_out) : (A_flow_out / A_flow_in);
+    const angle = 30; // Standard vinkel
+
+    // Find korrekt Zeta tabel fra physics.js baseret på FYSISK flow
+    let zeta_table;
+    if (visualFittingType.includes('transition_')) {
+        zeta_table = isExhaust ? physics.ROUND_TO_RECT_EXHAUST_ZETA : (isPhysicalExpansion ? physics.EXPANSION_ZETA : physics.CONTRACTION_ZETA);
+    } else if (isPhysicalExpansion) {
+        zeta_table = visualFittingType.includes('rect') ? physics.RECT_EXPANSION_ZETA : physics.EXPANSION_ZETA;
+    } else {
+        zeta_table = visualFittingType.includes('rect') ? physics.RECT_CONTRACTION_ZETA : physics.CONTRACTION_ZETA;
+    }
+
+    const temp = parseLocalFloat(document.getElementById('temperature').value || 20);
+    const { RHO } = physics.getAirProperties(temp);
+    const Q = airflow / 3600;
+
+    const zeta = physics.interpolateValue(angle, area_ratio, zeta_table);
+    const A_ref = Math.min(A_flow_in, A_flow_out); 
+    const v = Q / A_ref;
+    const pressureLoss = zeta * ((RHO / 2) * v ** 2);
+
     // Navngivning ud fra tegneretning (Input-retning)
     const name = isVisualExpansion ? 'Udvidelse (auto)' : (visualFittingType.includes('transition') ? 'Formovergang (auto)' : 'Indsnævring (auto)');
     const detailIn = visualInlet.shape === 'round' ? `Ø${visualInlet.d}` : `${visualInlet.h}x${visualInlet.w}`;
     const detailOut = visualOutlet.shape === 'round' ? `Ø${visualOutlet.d}` : `${visualOutlet.h}x${visualOutlet.w}`;
     
     let details = `fra ${detailIn} til ${detailOut}`;
-    if (globalFlowType === 'merging') {
-        details += ` (Fysisk flow: ${isVisualExpansion ? 'Indsnævring' : 'Udvidelse'})`;
+    if (isExhaust) {
+        details += ` (Fysisk flow: ${isPhysicalExpansion ? 'Udvidelse' : 'Indsnævring'})`;
     }
 
     // Arv termodynamiske egenskaber fra den kanal den forlænger
     const pProps = previousComponent && previousComponent.properties ? previousComponent.properties : {};
 
-    // Opret og returner ægte Fitting-komponent (Kun properties, fysik beregnes i motoren)
+    // Opret og returner ægte Fitting-komponent 
     return {
         id: 'transition_' + Date.now() + Math.floor(Math.random() * 1000),
         type: visualFittingType,
@@ -462,7 +495,8 @@ function createTransitionComponent(visualInlet, visualOutlet, airflow, globalFlo
         heightOut: visualOutlet.h || 0,
         properties: {
             type: visualFittingType,
-            angle: 30, // Standard vinkel
+            angle: angle,
+            area_ratio: area_ratio,
             inletShape: visualInlet.shape,
             outletShape: visualOutlet.shape,
             d1: visualInlet.d || 0,
@@ -474,7 +508,10 @@ function createTransitionComponent(visualInlet, visualOutlet, airflow, globalFlo
             // Nedarvede isoleringsegenskaber for korrekt termodynamik
             ambientTemp: pProps.ambientTemp,
             isoThick: pProps.isoThick,
-            isoLambda: pProps.isoLambda
+            isoLambda: pProps.isoLambda,
+            // Gem de beregnede tryktab og zeta værdier her for gennemsigtighed
+            zeta: zeta,
+            pressureLoss: pressureLoss
         },
         state: {} 
     };
@@ -536,7 +573,12 @@ function getFittingData(suffix, typeOverride = null) {
         const el = document.getElementById(id + suffix);
         return el ? el.value : '';
     };
-    const f = (id) => parseLocalFloat(s(id));
+    
+    // SIKRING: Parse til Null hvis NaN, ellers virker 50/50 flow distribution ikke!
+    const f = (id) => {
+        const val = parseLocalFloat(s(id));
+        return isNaN(val) ? null : val;
+    };
 
     const orientation = s('sys_orientation');
     if (orientation) properties.orientation = orientation;
@@ -575,8 +617,8 @@ function getFittingData(suffix, typeOverride = null) {
             const isSym = fittingType === 'tee_sym';
             const isBullhead = fittingType === 'tee_bullhead';
 
-            // Uanset hvilken type T-stykke, lagrer vi dem standardiseret
-            // så de altid skyder to grene ud i systemet
+            // Uanset hvilken type T-stykke, mapper vi d_in, d_straight, d_branch.
+            // Hvis Flow felterne er tomme, returnerer f() null, hvilket er afgørende for auto-split!
             if (isBullhead) {
                 properties.d_in = f('sys_tee_d_in');
                 properties.d_straight = f('sys_tee_d_out1');
@@ -585,7 +627,7 @@ function getFittingData(suffix, typeOverride = null) {
                 properties.q_branch = f('sys_tee_q_out2');
 
                 name = `Dobbelt T-stykke (Bullhead)`;
-                details = `Ind: Ø${properties.d_in} -> Gren 1: Ø${properties.d_straight}, Gren 2: Ø${properties.d_branch}`;
+                details = `Ind: Ø${properties.d_in} -> Afgr 1: Ø${properties.d_straight}, Afgr 2: Ø${properties.d_branch}`;
             } else {
                 properties.d_in = f('sys_tee_d_in');
                 properties.d_straight = isSym ? properties.d_in : f('sys_tee_d_straight');
@@ -734,11 +776,9 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
 
             calculationDetails = { A_m2: A, v_ms: v, zeta, Pdyn_Pa };
         } else if (p.type.includes('expansion') || p.type.includes('contraction') || p.type.includes('transition')) {
-            // ALT DIMENSIONSÆNDRING (Inkl. auto-genererede)
             const isExhaust = globalParams.globalFlowType === 'merging';
 
             let A1_visual, A2_visual;
-            // Bestem input-dimensioner ud fra type
             const shape1 = p.inletShape || (p.type.includes('rect') && !p.type.includes('transition') ? 'rect' : (p.type === 'transition_rect_round' ? 'rect' : 'round'));
             const shape2 = p.outletShape || (p.type.includes('rect') && !p.type.includes('transition') ? 'rect' : (p.type === 'transition_round_rect' ? 'rect' : 'round'));
             
@@ -751,7 +791,6 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
             A1_visual = shape1 === 'round' ? Math.PI * (getInternalDim(dim1_d) / 2000) ** 2 : (getInternalDim(dim1_h) / 1000) * (getInternalDim(dim1_w) / 1000);
             A2_visual = shape2 === 'round' ? Math.PI * (getInternalDim(dim2_d) / 2000) ** 2 : (getInternalDim(dim2_h) / 1000) * (getInternalDim(dim2_w) / 1000);
 
-            // Flow-retning logik
             const isExpansionVisually = A2_visual > A1_visual;
             const isExpansionAerodynamically = isExhaust ? !isExpansionVisually : isExpansionVisually;
 
@@ -773,7 +812,7 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
             }
 
             zeta = physics.interpolateValue(p.angle || 30, area_ratio, zeta_table);
-            const A_ref = Math.min(A_in, A_out); // Standard for disse tabeller
+            const A_ref = Math.min(A_in, A_out); 
             v = Q / A_ref;
             Pdyn_Pa = (RHO / 2) * v ** 2;
             pressureLoss = zeta * Pdyn_Pa;
@@ -812,14 +851,13 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
             const L_b2 = d_b2 / 1000;
             const perim_b2 = Math.PI * L_b2;
 
-            // Opfang flow pr. gren via properties sat i UI. Har de ingen værdi endnu, deles flow 50/50.
             let q_b1 = p.q_straight;
             let q_b2 = p.q_branch;
 
+            // FULDAUTOMATISK 50/50 HVIS FELTERNE ER TOMME
             if (q_b1 == null) q_b1 = (incomingFlow || 0) / 2;
             if (q_b2 == null) q_b2 = (incomingFlow || 0) / 2;
 
-            // Forholdsmæssig justering, så flow-balancen passer med incomingFlow fra træet
             if (incomingFlow > 0 && Math.abs((q_b1 + q_b2) - incomingFlow) > 1) {
                 const ratio = incomingFlow / (q_b1 + q_b2);
                 q_b1 *= ratio;
@@ -851,7 +889,6 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
                 }
             }
 
-            // Termodynamik for T-stykker
             if (!isMerging) {
                 if (calculateThermodynamicsFlag) {
                     const thermo_in = physics.calculateTemperatureDrop(incomingTemp, compAmbient, L_in, perim_in, q_m, isoThick, isoLambda, globalParams.globalRH);
@@ -903,8 +940,8 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
                 airflow_in: incomingFlow,
                 airflow_out: { 'outlet_straight': q_b1, 'outlet_branch': q_b2, 'outlet': incomingFlow },
                 velocity: v,
-                pressureLoss: Math.max(loss_b1, loss_b2), // Fallback for forældet single-value UI
-                portPressureLoss: { 'outlet_straight': loss_b1, 'outlet_branch': loss_b2 }, // Ny standard for graf-baseret kritisk vej
+                pressureLoss: Math.max(loss_b1, loss_b2), 
+                portPressureLoss: { 'outlet_straight': loss_b1, 'outlet_branch': loss_b2 }, // Det rigtige gemmested for UI'et!
                 zeta: Math.max(details_b1.zeta || 0, details_b2.zeta || 0),
                 inletDimension: inletDim, 
                 inletDimensions: { 'straight': { shape: 'round', d: d_b1 }, 'branch': { shape: 'round', d: d_b2 } }, 
@@ -920,7 +957,6 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
     return newCalc;
 }
 
-// Function to recalculate the entire system chain based on Graph Topology
 function recalculateSystem() {
     const graph = stateManager.getGraph();
     const userNodes = {};
@@ -970,10 +1006,13 @@ function recalculateSystem() {
     const { RHO, NU } = physics.getAirProperties(temp);
     const globalParams = { globalFlowType, globalAmbient, globalRH, RHO, NU, systemTemp: temp };
 
-    stateManager.clearSystem();
+    // VIGTIGT: Auto-overgange er nu permanent integreret i grafen, så det er kun Fysikken der opdateres her!
+    Object.values(graph.nodes).forEach(n => {
+        // Vi kører ikke physics fuldt endnu, det gør vi i passet nedenunder, men vi sletter ikke grafen!
+    });
 
-    function traverseAndCalculate(nodeId, incomingFlow, incomingTemp, incomingDim, parentId, parentPort) {
-        const comp = userNodes[nodeId];
+    function traverseAndCalculate(nodeId, incomingFlow, incomingTemp, incomingDim) {
+        const comp = graph.nodes[nodeId];
         if (!comp) return;
 
         const activeFlow = comp.isIncluded === false ? 0 : incomingFlow;
@@ -981,31 +1020,7 @@ function recalculateSystem() {
         let newCalc = calculateComponentPhysics(comp, activeFlow, incomingTemp, incomingDim, globalParams, false);
         comp.state = newCalc;
 
-        let currentParentId = parentId;
-        let currentParentPort = parentPort;
-
-        let childAttachDim = newCalc.inletDimension;
-        if (globalParams.globalFlowType === 'merging') {
-            childAttachDim = newCalc.outletDimension ? (newCalc.outletDimension['outlet'] || newCalc.outletDimension['outlet_straight'] || newCalc.outletDimension['outlet_branch']) : newCalc.inletDimension;
-        }
-
-        // Tjek for automatisk overgang og brug ALTID visuel rækkefølge: Parent -> Child
-        if (incomingDim && childAttachDim && !physics.areDimensionsEqual(incomingDim, childAttachDim)) {
-            // Find parent komponenten så vi kan arve isoleringsdata derfra
-            const parentComp = parentId ? graph.nodes[parentId] : null;
-
-            const transition = createTransitionComponent(incomingDim, childAttachDim, activeFlow, globalParams.globalFlowType, parentComp);
-            if (transition) {
-                transition.state = calculateComponentPhysics(transition, activeFlow, incomingTemp, incomingDim, globalParams, false);
-                stateManager.addSystemComponent(transition, currentParentId, currentParentPort, 'inlet');
-                currentParentId = transition.id;
-                currentParentPort = 'outlet';
-            }
-        }
-
-        stateManager.addSystemComponent(comp, currentParentId, currentParentPort, 'inlet');
-
-        const childrenEdges = userEdges.filter(e => e.from === nodeId);
+        const childrenEdges = graph.edges.filter(e => e.from === nodeId);
         childrenEdges.forEach(edge => {
             const outPort = edge.fromPort;
             const childId = edge.to;
@@ -1018,12 +1033,6 @@ function recalculateSystem() {
             }
 
             let portTemp = incomingTemp;
-            if (comp.state.temperature_out && comp.state.temperature_out[outPort] !== undefined) {
-                portTemp = comp.state.temperature_out[outPort];
-            } else if (comp.state.temperature_out && comp.state.temperature_out['outlet'] !== undefined) {
-                portTemp = comp.state.temperature_out['outlet'];
-            }
-
             let portDim = null;
             if (globalParams.globalFlowType === 'merging' && comp.state.inletDimensions) {
                 const branchMap = { 'outlet_straight': 'straight', 'outlet_branch': 'branch' };
@@ -1035,14 +1044,14 @@ function recalculateSystem() {
                 portDim = comp.state.outletDimension['outlet'];
             }
 
-            traverseAndCalculate(childId, portFlow, portTemp, portDim, comp.id, outPort);
+            traverseAndCalculate(childId, portFlow, portTemp, portDim);
         });
     }
 
-    const rootIds = Object.keys(userNodes).filter(id => !userEdges.find(e => e.to === id));
+    const rootIds = Object.keys(graph.nodes).filter(id => !graph.edges.find(e => e.to === id));
 
     rootIds.forEach(rootId => {
-        traverseAndCalculate(rootId, startAirflow, temp, null, null, null);
+        traverseAndCalculate(rootId, startAirflow, temp, null);
     });
 
     function traverseAndCalculateThermodynamics(nodeId, incomingTemp) {
@@ -1050,10 +1059,9 @@ function recalculateSystem() {
         if (!comp || !comp.state) return incomingTemp;
 
         const isExhaust = globalParams.globalFlowType === 'merging';
-        const childrenEdges = userEdges.filter(e => e.from === nodeId);
+        const childrenEdges = graph.edges.filter(e => e.from === nodeId);
         comp.state.heatLoss = 0; 
 
-        // Hjælperfunktion til at regne overflade på rør og overgange (Gælder for både Indblæs og Udsug)
         const getSurfaceProps = (c) => {
             let length = 0;
             let perimeter = 0;
@@ -1079,9 +1087,8 @@ function recalculateSystem() {
                 const d2_eq = Math.sqrt(4 * A2 / Math.PI);
                 const angleRad = (p.angle || 30) * Math.PI / 180;
                 
-                // Keglestub længde beregning
                 length = Math.abs(d1_eq - d2_eq) / 2 / Math.tan(angleRad / 2);
-                if (length < 0.1 || isNaN(length) || !isFinite(length)) length = 0.5; // Standard hvis arealerne er for tætte (f.eks. form-overgang)
+                if (length < 0.1 || isNaN(length) || !isFinite(length)) length = 0.5; 
                 
                 perimeter = Math.PI * (d1_eq + d2_eq) / 2;
                 hasSurface = true;
@@ -1183,7 +1190,6 @@ function recalculateSystem() {
             }
             
             comp.state.temperature_in = tempLeavingTowardsAHU;
-
             return tempLeavingTowardsAHU;
         }
 
@@ -1200,7 +1206,7 @@ function recalculateSystem() {
 }
 window.recalculateSystem = recalculateSystem;
 
-// Exposed handler for Add button
+// --- INDSÆTTELSE AF NY KOMPONENT & AUTO-OVERGANG ---
 window.handleInlineComponentSubmit = function (event) {
     if (event) event.preventDefault();
 
@@ -1268,9 +1274,57 @@ window.handleInlineComponentSubmit = function (event) {
             component.state.airflow_in = currentAirflow;
         }
 
-        // Add exactly where requested
-        if (parentId) {
-            stateManager.addSystemComponent(component, parentId, parentPort || 'outlet', 'inlet');
+        let actualParentId = parentId;
+        let actualParentPort = parentPort || 'outlet';
+
+        // === IDENTIFICER AUTO-OVERGANG FØR INDSÆTTELSE ===
+        if (actualParentId && parentComp) {
+            
+            // Find det foregående rør's dimension
+            let pDim = null;
+            if (parentComp.state && parentComp.state.outletDimension) {
+                if (actualParentPort && parentComp.state.outletDimension[actualParentPort]) {
+                    pDim = parentComp.state.outletDimension[actualParentPort];
+                } else if (parentComp.state.outletDimension['outlet']) {
+                    pDim = parentComp.state.outletDimension['outlet'];
+                }
+            }
+            if (!pDim) { 
+                const pp = parentComp.properties;
+                if (parentComp.type === 'straightDuct') pDim = pp.shape === 'round' ? {shape: 'round', d: pp.d || pp.diameter} : {shape: 'rect', h: pp.h || pp.sideA, w: pp.w || pp.sideB};
+                else if (parentComp.type.startsWith('tee')) pDim = actualParentPort === 'outlet_branch' ? {shape: 'round', d: pp.d_branch} : {shape: 'round', d: pp.d_straight};
+                else if (parentComp.type.includes('expansion') || parentComp.type.includes('contraction')) pDim = {shape: 'round', d: pp.d2};
+                else if (parentComp.type === 'bend_circ') pDim = {shape: 'round', d: pp.d};
+                else if (parentComp.type === 'bend_rect') pDim = {shape: 'rect', h: pp.h, w: pp.w};
+                else if (parentComp.type === 'transition_round_rect') pDim = {shape: 'rect', h: pp.h, w: pp.w};
+                else if (parentComp.type === 'transition_rect_round') pDim = {shape: 'round', d: pp.d};
+            }
+
+            // Find den nye komponents dimension
+            let cDim = null;
+            const cp = component.properties;
+            if (component.type === 'straightDuct') cDim = cp.shape === 'round' ? {shape: 'round', d: cp.d || cp.diameter} : {shape: 'rect', h: cp.h || cp.sideA, w: cp.w || cp.sideB};
+            else if (component.type.startsWith('tee')) cDim = {shape: 'round', d: cp.d_in};
+            else if (component.type.includes('expansion') || component.type.includes('contraction')) cDim = {shape: 'round', d: cp.d1};
+            else if (component.type === 'bend_circ') cDim = {shape: 'round', d: cp.d};
+            else if (component.type === 'bend_rect') cDim = {shape: 'rect', h: cp.h, w: cp.w};
+            else if (component.type === 'transition_round_rect') cDim = {shape: 'round', d: cp.d};
+            else if (component.type === 'transition_rect_round') cDim = {shape: 'rect', h: cp.h, w: cp.w};
+
+            // Indsæt Transitionen I GRAFEN før the ny komponent tilknyttes
+            if (pDim && cDim && !physics.areDimensionsEqual(pDim, cDim)) {
+                const calculatedTransition = createTransitionComponent(pDim, cDim, currentAirflow, systemType, parentComp);
+                if (calculatedTransition) {
+                    stateManager.addSystemComponent(calculatedTransition, actualParentId, actualParentPort, 'inlet');
+                    actualParentId = calculatedTransition.id;
+                    actualParentPort = 'outlet';
+                }
+            }
+        }
+
+        // Tilføj endelig den komponent brugeren anmodede om
+        if (actualParentId) {
+            stateManager.addSystemComponent(component, actualParentId, actualParentPort, 'inlet');
         } else {
             stateManager.addSystemComponent(component);
         }
