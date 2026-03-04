@@ -519,7 +519,9 @@ function createTransitionComponent(lastOutlet, newInlet, airflow, globalFlowType
             area_ratio,
             isEstimated,
             inletShape: lastOutlet.shape,
-            outletShape: newInlet.shape
+            outletShape: newInlet.shape,
+            zeta: zeta,                  // VIGTIGT: Vi lagrer Zeta her så motoren kan genbruge den
+            pressureLoss: pressureLoss   // Fallback: Hvis fysik-motoren bruger fast tryktab
         },
         state: {
             airflow_in: airflow,
