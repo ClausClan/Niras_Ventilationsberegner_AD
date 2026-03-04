@@ -575,8 +575,8 @@ function getFittingData(suffix, typeOverride = null) {
             const isSym = fittingType === 'tee_sym';
             const isBullhead = fittingType === 'tee_bullhead';
 
-            // Uanset hvilken type T-stykke (inkl. bullhead), mapper vi dem til at have 
-            // d_in (main), d_straight (port 1), d_branch (port 2) så de kan indgå i træet uden valg af retning.
+            // Uanset hvilken type T-stykke, lagrer vi dem standardiseret
+            // så de altid skyder to grene ud i systemet
             if (isBullhead) {
                 properties.d_in = f('sys_tee_d_in');
                 properties.d_straight = f('sys_tee_d_out1');
@@ -585,7 +585,7 @@ function getFittingData(suffix, typeOverride = null) {
                 properties.q_branch = f('sys_tee_q_out2');
 
                 name = `Dobbelt T-stykke (Bullhead)`;
-                details = `Ind: Ø${properties.d_in} -> Afgr 1: Ø${properties.d_straight}, Afgr 2: Ø${properties.d_branch}`;
+                details = `Ind: Ø${properties.d_in} -> Gren 1: Ø${properties.d_straight}, Gren 2: Ø${properties.d_branch}`;
             } else {
                 properties.d_in = f('sys_tee_d_in');
                 properties.d_straight = isSym ? properties.d_in : f('sys_tee_d_straight');
