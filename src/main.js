@@ -414,7 +414,13 @@ function handleFittingCalculation(event) {
 
 // Helper to create a transition component
 function createTransitionComponent(lastOutlet, newInlet, airflow, globalFlowType, previousComponent) {
-    if (!lastOutlet || !newInlet) return null;
+    console.log("🛠️ [DEBUG TRANSITION] Starter 'createTransitionComponent'...");
+    console.log("🛠️ [DEBUG TRANSITION] Input Data:", { lastOutlet, newInlet, airflow, globalFlowType });
+
+    if (!lastOutlet || !newInlet) {
+        console.warn("🛠️ [DEBUG TRANSITION] Mangler lastOutlet eller newInlet. Afbryder.");
+        return null;
+    }
 
     let needsTransition = false;
 
@@ -426,7 +432,12 @@ function createTransitionComponent(lastOutlet, newInlet, airflow, globalFlowType
         needsTransition = true;
     }
 
-    if (!needsTransition) return null;
+    if (!needsTransition) {
+        console.log("🛠️ [DEBUG TRANSITION] Ingen overgang nødvendig. Dimensionerne er ens.");
+        return null;
+    }
+
+    console.log("🛠️ [DEBUG TRANSITION] Overgang bekræftet. Beregner fysik...");
 
     // Calc Properties
     const temp = parseLocalFloat(document.getElementById('temperature').value);
@@ -445,6 +456,8 @@ function createTransitionComponent(lastOutlet, newInlet, airflow, globalFlowType
     const isExpansion = A2 > A1;
     const area_ratio = A1 / A2;
     let zeta_table;
+
+    console.log("🛠️ [DEBUG TRANSITION] Areal-beregning:", { A1_m2: A1, A2_m2: A2, isExpansion, area_ratio });
 
     // Logic to choose table based on types
     if (lastOutlet.shape === 'round' && newInlet.shape === 'rect') {
@@ -472,6 +485,14 @@ function createTransitionComponent(lastOutlet, newInlet, airflow, globalFlowType
     const v = Q / A_ref;
     const Pdyn_Pa = (RHO / 2) * v ** 2;
     const pressureLoss = zeta * Pdyn_Pa;
+
+    console.log("🛠️ [DEBUG TRANSITION] Fysisk resultat udregnet:", { 
+        zeta_value: zeta, 
+        A_ref: A_ref, 
+        hastighed_v: v, 
+        dynamisk_tryk: Pdyn_Pa, 
+        tryktab_Pa: pressureLoss 
+    });
 
     // Generate unique ID
     const uniqueId = 'transition_' + Date.now() + Math.floor(Math.random() * 1000);
@@ -518,6 +539,8 @@ function createTransitionComponent(lastOutlet, newInlet, airflow, globalFlowType
 // --- New Inline Form Submit Logic (Phase 15.4) ---
 window.handleInlineComponentSubmit = function (event) {
     if (event) event.preventDefault();
+    console.log("🛠️ [DEBUG SUBMIT] Starter handleInlineComponentSubmit...");
+
     const type = document.getElementById('inlineComponentType').value;
 
     const temp = parseLocalFloat(document.getElementById('temperature').value);
@@ -539,6 +562,8 @@ window.handleInlineComponentSubmit = function (event) {
     } else if (parentComp && parentComp.airflow) {
         currentAirflow = parentComp.airflow;
     }
+    
+    console.log("🛠️ [DEBUG SUBMIT] Opfanget currentAirflow:", currentAirflow);
 
     const isInline = !!document.getElementById('ductLength_inline') || !!document.getElementById('systemFittingType_inline');
     const suffix = isInline ? '_inline' : '';
@@ -604,20 +629,27 @@ window.handleInlineComponentSubmit = function (event) {
                 h: parseFloat(component.heightIn || component.height || 0)
             };
 
+            console.log("🛠️ [DEBUG SUBMIT] Tjekker behov for overgang mellem:", { lastOutlet, newInlet });
+
             // Kald din indbyggede funktion
             const calculatedTransition = createTransitionComponent(lastOutlet, newInlet, currentAirflow, systemType, parentComp);
 
             if (calculatedTransition) {
+                console.log("🛠️ [DEBUG SUBMIT] Indsætter udregnet overgang i stateManager:", calculatedTransition);
                 // 1. Indsæt den beregnede overgang
                 stateManager.addSystemComponent(calculatedTransition, actualParentId, actualParentPort, 'inlet');
                 
                 // 2. Kæd komponenten på overgangen
                 actualParentId = calculatedTransition.id;
                 actualParentPort = 'outlet'; 
+            } else {
+                console.log("🛠️ [DEBUG SUBMIT] Ingen overgang oprettet (calculatedTransition returnerede null).");
             }
 
+            console.log("🛠️ [DEBUG SUBMIT] Indsætter hovedkomponent:", component);
             stateManager.addSystemComponent(component, actualParentId, actualParentPort, 'inlet');
         } else {
+            console.log("🛠️ [DEBUG SUBMIT] Indsætter root-komponent (ingen parent):", component);
             stateManager.addSystemComponent(component);
         }
 
@@ -625,7 +657,9 @@ window.handleInlineComponentSubmit = function (event) {
         window.currentAddParentPort = null;
         setCorrectionTargetId(null);
 
+        console.log("🛠️ [DEBUG SUBMIT] Kalder recalculateSystem(). Hold øje med om den overskriver overgangens tryktab!");
         recalculateSystem();
+        
         ui.showSaveStatus('Komponent tilføjet', 'saved');
         ui.updateUndoRedoUI(canUndo(), canRedo());
     }
