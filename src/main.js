@@ -413,9 +413,9 @@ function handleFittingCalculation(event) {
 }
 
 // Din eksisterende beregnings-helper, refaktoreret til at returnere native fittings og reduceret i omfang
+// Din eksisterende beregnings-helper, refaktoreret til at adskille VISUEL og FYSISK flowretning
 function createTransitionComponent(lastOutlet, newInlet, airflow, globalFlowType, previousComponent) {
     console.log("🛠️ [DEBUG TRANSITION] Starter 'createTransitionComponent'...");
-    console.log("🛠️ [DEBUG TRANSITION] Input Data:", { lastOutlet, newInlet, airflow, globalFlowType });
 
     if (!lastOutlet || !newInlet) {
         console.warn("🛠️ [DEBUG TRANSITION] Mangler lastOutlet eller newInlet. Afbryder.");
@@ -423,75 +423,88 @@ function createTransitionComponent(lastOutlet, newInlet, airflow, globalFlowType
     }
 
     let needsTransition = false;
-    let isExpansion = false;
-    let fittingType = 'transition';
+    let isVisualExpansion = false;
+    let visualFittingType = 'transition';
 
-    // 1. Identificer overgangstype
+    // 1. Identificer VISUEL overgangstype (Hvad der er tegnet på skærmen)
     if (lastOutlet.shape === 'round' && newInlet.shape === 'round') {
         if (lastOutlet.d !== newInlet.d) {
             needsTransition = true;
-            isExpansion = newInlet.d > lastOutlet.d;
-            fittingType = isExpansion ? 'expansion' : 'contraction';
+            isVisualExpansion = newInlet.d > lastOutlet.d;
+            visualFittingType = isVisualExpansion ? 'expansion' : 'contraction';
         }
     } else if (lastOutlet.shape === 'rect' && newInlet.shape === 'rect') {
         if (lastOutlet.h !== newInlet.h || lastOutlet.w !== newInlet.w) {
             needsTransition = true;
-            isExpansion = (newInlet.h * newInlet.w) > (lastOutlet.h * lastOutlet.w);
-            fittingType = isExpansion ? 'expansion_rect' : 'contraction_rect';
+            isVisualExpansion = (newInlet.h * newInlet.w) > (lastOutlet.h * lastOutlet.w);
+            visualFittingType = isVisualExpansion ? 'expansion_rect' : 'contraction_rect';
         }
     } else if (lastOutlet.shape !== newInlet.shape) {
         needsTransition = true;
-        fittingType = lastOutlet.shape === 'round' ? 'transition_round_rect' : 'transition_rect_round';
+        visualFittingType = lastOutlet.shape === 'round' ? 'transition_round_rect' : 'transition_rect_round';
     }
 
     if (!needsTransition) {
-        console.log("🛠️ [DEBUG TRANSITION] Ingen overgang nødvendig. Dimensionerne er ens.");
         return null;
     }
 
-    console.log("🛠️ [DEBUG TRANSITION] Overgang bekræftet. Type:", fittingType);
+    // 2. Areal Beregning (Hvad der blev tegnet)
+    const A1_draw = lastOutlet.shape === 'round' ? Math.PI * (getInternalDim(lastOutlet.d) / 2000) ** 2 : (getInternalDim(lastOutlet.h) / 1000) * (getInternalDim(lastOutlet.w) / 1000);
+    const A2_draw = newInlet.shape === 'round' ? Math.PI * (getInternalDim(newInlet.d) / 2000) ** 2 : (getInternalDim(newInlet.h) / 1000) * (getInternalDim(newInlet.w) / 1000);
+    
+    // 3. FYSISKE Beregninger (Korrigeret for Udsugning/Indblæsning)
+    // Er systemet udsugning ('merging'), strømmer luften fra A2 mod A1 (modsat tegneretningen).
+    const isExhaust = globalFlowType === 'merging';
+    const A_flow_in = isExhaust ? A2_draw : A1_draw;
+    const A_flow_out = isExhaust ? A1_draw : A2_draw;
 
-    // 2. Fysiske beregninger (Bibeholdes for at sikre tryktabet)
+    const isPhysicalExpansion = A_flow_out > A_flow_in;
+    const area_ratio = isPhysicalExpansion ? (A_flow_in / A_flow_out) : (A_flow_out / A_flow_in);
+    const angle = 30; // Standard vinkel
+
+    // Find korrekt Zeta tabel fra physics.js baseret på FYSISK flow
+    let zeta_table;
+    if (visualFittingType.includes('transition_')) {
+        zeta_table = isExhaust ? physics.ROUND_TO_RECT_EXHAUST_ZETA : (isPhysicalExpansion ? physics.EXPANSION_ZETA : physics.CONTRACTION_ZETA);
+    } else if (isPhysicalExpansion) {
+        zeta_table = visualFittingType.includes('rect') ? physics.RECT_EXPANSION_ZETA : physics.EXPANSION_ZETA;
+    } else {
+        zeta_table = visualFittingType.includes('rect') ? physics.RECT_CONTRACTION_ZETA : physics.CONTRACTION_ZETA;
+    }
+
     const temp = parseLocalFloat(document.getElementById('temperature').value || 20);
     const { RHO, NU } = physics.getAirProperties(temp);
     const Q = airflow / 3600;
 
-    const A1 = lastOutlet.shape === 'round' ? Math.PI * (getInternalDim(lastOutlet.d) / 2000) ** 2 : (getInternalDim(lastOutlet.h) / 1000) * (getInternalDim(lastOutlet.w) / 1000);
-    const A2 = newInlet.shape === 'round' ? Math.PI * (getInternalDim(newInlet.d) / 2000) ** 2 : (getInternalDim(newInlet.h) / 1000) * (getInternalDim(newInlet.w) / 1000);
-    
-    const area_ratio = isExpansion ? A1 / A2 : A2 / A1;
-    const angle = 30; // Standard vinkel
-
-    // Find korrekt Zeta tabel fra physics.js
-    let zeta_table;
-    if (fittingType === 'transition_round_rect') zeta_table = globalFlowType === 'merging' ? physics.ROUND_TO_RECT_EXHAUST_ZETA : (isExpansion ? physics.EXPANSION_ZETA : physics.CONTRACTION_ZETA);
-    else if (fittingType === 'transition_rect_round') zeta_table = globalFlowType === 'splitting' ? physics.RECT_TO_ROUND_SUPPLY_ZETA : (isExpansion ? physics.EXPANSION_ZETA : physics.CONTRACTION_ZETA);
-    else if (fittingType.includes('expansion')) zeta_table = fittingType.includes('rect') ? physics.RECT_EXPANSION_ZETA : physics.EXPANSION_ZETA;
-    else zeta_table = fittingType.includes('rect') ? physics.RECT_CONTRACTION_ZETA : physics.CONTRACTION_ZETA;
-
     const zeta = physics.interpolateValue(angle, area_ratio, zeta_table);
-    const A_ref = isExpansion ? A1 : A2;
+    // Dynamisk tryk i overgange regnes altid af det mindste areal (højeste hastighed i samlingen)
+    const A_ref = Math.min(A_flow_in, A_flow_out); 
     const v = Q / A_ref;
     const pressureLoss = zeta * ((RHO / 2) * v ** 2);
 
-    console.log("🛠️ [DEBUG TRANSITION] Fysisk resultat udregnet:", { 
+    console.log("🛠️ [DEBUG TRANSITION] Fysisk resultat:", { 
+        visuel_type: visualFittingType,
+        fysisk_flow_er_udvidelse: isPhysicalExpansion,
         zeta_value: zeta, 
-        A_ref: A_ref, 
-        hastighed_v: v, 
         tryktab_Pa: pressureLoss 
     });
 
-    // Navngivning til UI
-    const name = isExpansion ? 'Udvidelse (auto)' : (fittingType.includes('transition') ? 'Formovergang (auto)' : 'Indsnævring (auto)');
+    // Navngivning til UI - Bevarer logikken for hvordan man har "tegnet" den
+    const name = isVisualExpansion ? 'Udvidelse (auto)' : (visualFittingType.includes('transition') ? 'Formovergang (auto)' : 'Indsnævring (auto)');
     const detailIn = lastOutlet.shape === 'round' ? `Ø${lastOutlet.d}` : `${lastOutlet.h}x${lastOutlet.w}`;
     const detailOut = newInlet.shape === 'round' ? `Ø${newInlet.d}` : `${newInlet.h}x${newInlet.w}`;
+    
+    let details = `fra ${detailIn} til ${detailOut}`;
+    if (isExhaust) {
+        details += ` (Fysisk Flow: ${isPhysicalExpansion ? 'Udvidelse' : 'Indsnævring'})`;
+    }
 
-    // 3. Opret og returner ægte Fitting-komponent - 100% matchet til manuel syntaks
+    // 4. Opret og returner ægte Fitting-komponent - 100% matchet til manuel syntaks
     const transitionComponent = {
         id: 'transition_' + Date.now() + Math.floor(Math.random() * 1000),
-        type: fittingType, // CRITICAL FIX: Nu er root-type 'contraction', 'expansion' osv.
+        type: visualFittingType, // Stadig den visuelle root-type til diagrammet
         name: name,
-        details: `fra ${detailIn} til ${detailOut}`,
+        details: details,
         isAutoGenerated: true,
         isIncluded: true,
         length: 500, // For 3D diagrammet
@@ -504,13 +517,13 @@ function createTransitionComponent(lastOutlet, newInlet, airflow, globalFlowType
         widthOut: newInlet.w || 0,
         heightOut: newInlet.h || 0,
         properties: {
-            type: fittingType, // Kopieres til properties som den manuelle gør
+            type: visualFittingType,
             angle: angle,
             area_ratio: area_ratio,
             inletShape: lastOutlet.shape,
             outletShape: newInlet.shape,
             
-            // Native recalculate properties - CRITICAL FIX
+            // Native properties til recalculateSystem
             d1: lastOutlet.d || 0,
             d2: newInlet.d || 0,
             h1: lastOutlet.h || 0,
@@ -518,13 +531,14 @@ function createTransitionComponent(lastOutlet, newInlet, airflow, globalFlowType
             h2: newInlet.h || 0,
             w2: newInlet.w || 0,
             
+            // Gemte fysiske værdier der Tager højde for udsugning
+            physical_type: isPhysicalExpansion ? 'expansion' : 'contraction',
             zeta: zeta,
             pressureLoss: pressureLoss
         },
-        state: {} // Tom start-state, lader recalculateSystem klare flow-udfyldningen
+        state: {} 
     };
 
-    console.log("🛠️ [DEBUG TRANSITION] Returnerer komponent:", transitionComponent);
     return transitionComponent;
 }
 
@@ -650,7 +664,9 @@ window.handleInlineComponentSubmit = function (event) {
         setCorrectionTargetId(null);
 
         console.log("🛠️ [DEBUG SUBMIT] Kalder recalculateSystem(). Hold øje med tryktabet!");
-        recalculateSystem();
+        if (typeof window.recalculateSystem === 'function') {
+             window.recalculateSystem();
+        }
         
         ui.showSaveStatus('Komponent tilføjet', 'saved');
         ui.updateUndoRedoUI(canUndo(), canRedo());
