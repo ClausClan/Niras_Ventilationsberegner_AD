@@ -412,136 +412,95 @@ function handleFittingCalculation(event) {
     }
 }
 
-// Helper to create a transition component
+// Din eksisterende beregnings-helper, refaktoreret til at returnere native fittings og reduceret i omfang
 function createTransitionComponent(lastOutlet, newInlet, airflow, globalFlowType, previousComponent) {
-    console.log("🛠️ [DEBUG TRANSITION] Starter 'createTransitionComponent'...");
-    console.log("🛠️ [DEBUG TRANSITION] Input Data:", { lastOutlet, newInlet, airflow, globalFlowType });
-
-    if (!lastOutlet || !newInlet) {
-        console.warn("🛠️ [DEBUG TRANSITION] Mangler lastOutlet eller newInlet. Afbryder.");
-        return null;
-    }
+    if (!lastOutlet || !newInlet) return null;
 
     let needsTransition = false;
+    let isExpansion = false;
+    let fittingType = 'transition';
 
+    // 1. Identificer overgangstype
     if (lastOutlet.shape === 'round' && newInlet.shape === 'round') {
-        if (lastOutlet.d !== newInlet.d) needsTransition = true;
+        if (lastOutlet.d !== newInlet.d) {
+            needsTransition = true;
+            isExpansion = newInlet.d > lastOutlet.d;
+            fittingType = isExpansion ? 'expansion' : 'contraction';
+        }
     } else if (lastOutlet.shape === 'rect' && newInlet.shape === 'rect') {
-        if (lastOutlet.h !== newInlet.h || lastOutlet.w !== newInlet.w) needsTransition = true;
+        if (lastOutlet.h !== newInlet.h || lastOutlet.w !== newInlet.w) {
+            needsTransition = true;
+            isExpansion = (newInlet.h * newInlet.w) > (lastOutlet.h * lastOutlet.w);
+            fittingType = isExpansion ? 'expansion_rect' : 'contraction_rect';
+        }
     } else if (lastOutlet.shape !== newInlet.shape) {
         needsTransition = true;
+        fittingType = lastOutlet.shape === 'round' ? 'transition_round_rect' : 'transition_rect_round';
     }
 
-    if (!needsTransition) {
-        console.log("🛠️ [DEBUG TRANSITION] Ingen overgang nødvendig. Dimensionerne er ens.");
-        return null;
-    }
+    if (!needsTransition) return null;
 
-    console.log("🛠️ [DEBUG TRANSITION] Overgang bekræftet. Beregner fysik...");
-
-    // Calc Properties
-    const temp = parseLocalFloat(document.getElementById('temperature').value);
+    // 2. Fysiske beregninger (Bibeholdes for at sikre tryktabet)
+    const temp = parseLocalFloat(document.getElementById('temperature').value || 20);
     const { RHO, NU } = physics.getAirProperties(temp);
     const Q = airflow / 3600;
 
-    let A1, A2, d1, d2, h1, w1, h2, w2, type, name, details;
-    let isEstimated = false;
-    const angle = 30; // Standard 30 grader
+    const A1 = lastOutlet.shape === 'round' ? Math.PI * (getInternalDim(lastOutlet.d) / 2000) ** 2 : (getInternalDim(lastOutlet.h) / 1000) * (getInternalDim(lastOutlet.w) / 1000);
+    const A2 = newInlet.shape === 'round' ? Math.PI * (getInternalDim(newInlet.d) / 2000) ** 2 : (getInternalDim(newInlet.h) / 1000) * (getInternalDim(newInlet.w) / 1000);
+    
+    const area_ratio = isExpansion ? A1 / A2 : A2 / A1;
+    const angle = 30; // Standard vinkel
 
-    if (lastOutlet.shape === 'round') { A1 = Math.PI * (getInternalDim(lastOutlet.d) / 2000) ** 2; d1 = lastOutlet.d; }
-    else { A1 = (getInternalDim(lastOutlet.h) / 1000) * (getInternalDim(lastOutlet.w) / 1000); h1 = lastOutlet.h; w1 = lastOutlet.w; }
-    if (newInlet.shape === 'round') { A2 = Math.PI * (getInternalDim(newInlet.d) / 2000) ** 2; d2 = newInlet.d; }
-    else { A2 = (getInternalDim(newInlet.h) / 1000) * (getInternalDim(newInlet.w) / 1000); h2 = newInlet.h; w2 = newInlet.w; }
-
-    const isExpansion = A2 > A1;
-    const area_ratio = A1 / A2;
+    // Find korrekt Zeta tabel fra physics.js
     let zeta_table;
-
-    console.log("🛠️ [DEBUG TRANSITION] Areal-beregning:", { A1_m2: A1, A2_m2: A2, isExpansion, area_ratio });
-
-    // Logic to choose table based on types
-    if (lastOutlet.shape === 'round' && newInlet.shape === 'rect') {
-        type = 'transition_round_rect'; name = 'OBS: Overgang (auto)'; details = `fra Ø${d1} til ${h2}x${w2}`;
-        if (globalFlowType === 'merging') zeta_table = physics.ROUND_TO_RECT_EXHAUST_ZETA;
-        else { zeta_table = isExpansion ? physics.EXPANSION_ZETA : physics.CONTRACTION_ZETA; isEstimated = true; }
-    } else if (lastOutlet.shape === 'rect' && newInlet.shape === 'round') {
-        type = 'transition_rect_round'; name = 'OBS: Overgang (auto)'; details = `fra ${h1}x${w1} til Ø${d2}`;
-        if (globalFlowType === 'splitting') zeta_table = physics.RECT_TO_ROUND_SUPPLY_ZETA;
-        else { zeta_table = isExpansion ? physics.EXPANSION_ZETA : physics.CONTRACTION_ZETA; isEstimated = true; }
-    } else if (lastOutlet.shape === 'round' && newInlet.shape === 'round') {
-        type = isExpansion ? 'expansion' : 'contraction';
-        zeta_table = isExpansion ? physics.EXPANSION_ZETA : physics.CONTRACTION_ZETA;
-        name = isExpansion ? 'OBS: Udvidelse (auto)' : 'OBS: Indsnævring (auto)'; details = `fra Ø${d1} til Ø${d2}`;
-    } else { // rect to rect
-        type = isExpansion ? 'expansion_rect' : 'contraction_rect';
-        zeta_table = isExpansion ? physics.RECT_EXPANSION_ZETA : physics.RECT_CONTRACTION_ZETA;
-        name = isExpansion ? 'OBS: Udvidelse (auto)' : 'OBS: Indsnævring (auto)'; details = `fra ${h1}x${w1} til ${h2}x${w2}`;
-    }
-
-    if (isEstimated) details += ' (Estimeret)';
+    if (fittingType === 'transition_round_rect') zeta_table = globalFlowType === 'merging' ? physics.ROUND_TO_RECT_EXHAUST_ZETA : (isExpansion ? physics.EXPANSION_ZETA : physics.CONTRACTION_ZETA);
+    else if (fittingType === 'transition_rect_round') zeta_table = globalFlowType === 'splitting' ? physics.RECT_TO_ROUND_SUPPLY_ZETA : (isExpansion ? physics.EXPANSION_ZETA : physics.CONTRACTION_ZETA);
+    else if (fittingType.includes('expansion')) zeta_table = fittingType.includes('rect') ? physics.RECT_EXPANSION_ZETA : physics.EXPANSION_ZETA;
+    else zeta_table = fittingType.includes('rect') ? physics.RECT_CONTRACTION_ZETA : physics.CONTRACTION_ZETA;
 
     const zeta = physics.interpolateValue(angle, area_ratio, zeta_table);
     const A_ref = isExpansion ? A1 : A2;
     const v = Q / A_ref;
-    const Pdyn_Pa = (RHO / 2) * v ** 2;
-    const pressureLoss = zeta * Pdyn_Pa;
+    const pressureLoss = zeta * ((RHO / 2) * v ** 2);
 
-    console.log("🛠️ [DEBUG TRANSITION] Fysisk resultat udregnet:", { 
-        zeta_value: zeta, 
-        A_ref: A_ref, 
-        hastighed_v: v, 
-        dynamisk_tryk: Pdyn_Pa, 
-        tryktab_Pa: pressureLoss 
-    });
+    // Navngivning til UI
+    const name = isExpansion ? 'Udvidelse (auto)' : (fittingType.includes('transition') ? 'Formovergang (auto)' : 'Indsnævring (auto)');
+    const detailIn = lastOutlet.shape === 'round' ? `Ø${lastOutlet.d}` : `${lastOutlet.h}x${lastOutlet.w}`;
+    const detailOut = newInlet.shape === 'round' ? `Ø${newInlet.d}` : `${newInlet.h}x${newInlet.w}`;
 
-    // Generate unique ID
-    const uniqueId = 'transition_' + Date.now() + Math.floor(Math.random() * 1000);
-
-    const transitionComponent = {
-        id: uniqueId,
-        type: 'fitting',
-        fittingType: type.includes('expansion') ? 'expansion' : (type.includes('contraction') ? 'contraction' : 'transition'),
+    // 3. Opret og returner ægte Fitting-komponent
+    return {
+        id: 'transition_' + Date.now() + Math.floor(Math.random() * 1000),
+        type: 'fitting', // Nu er den en ægte fitting i systemet
+        fittingType: fittingType, // Mapper direkte til UI-typer ('expansion', 'contraction' osv.)
         name: name,
-        details: details,
+        details: `fra ${detailIn} til ${detailOut}`,
         isAutoGenerated: true,
         isIncluded: true,
-        length: 500, // Sikrer at den har en længde, så den kan tegnes i 3D
+        length: 500, // For 3D diagrammet
         shape: lastOutlet.shape === 'round' ? 'circular' : 'rectangular',
-        diameter: d1 || 0,
-        width: w1 || 0,
-        height: h1 || 0,
+        diameter: lastOutlet.d || 0,
+        width: lastOutlet.w || 0,
+        height: lastOutlet.h || 0,
         shapeOut: newInlet.shape === 'round' ? 'circular' : 'rectangular',
-        diameterOut: d2 || 0,
-        widthOut: w2 || 0,
-        heightOut: h2 || 0,
+        diameterOut: newInlet.d || 0,
+        widthOut: newInlet.w || 0,
+        heightOut: newInlet.h || 0,
         properties: {
-            angle,
-            area_ratio,
-            isEstimated,
+            angle: angle,
+            area_ratio: area_ratio,
             inletShape: lastOutlet.shape,
             outletShape: newInlet.shape,
-            zeta: zeta,                  // VIGTIGT: Vi lagrer Zeta her så motoren kan genbruge den
-            pressureLoss: pressureLoss   // Fallback: Hvis fysik-motoren bruger fast tryktab
-        },
-        state: {
-            airflow_in: airflow,
-            airflow_out: { 'outlet': airflow },
-            velocity: v,
-            pressureLoss: pressureLoss,
             zeta: zeta,
-            calculationDetails: { Q_m3s: Q, A_m2: A_ref, v_ms: v, zeta: zeta, Pdyn_Pa: Pdyn_Pa, type: type, angle: angle },
-            outletDimension: { 'outlet': newInlet },
-            inletDimension: lastOutlet
-        }
+            pressureLoss: pressureLoss // Sikrer at genberegningen bruger dette tal automatisk
+        },
+        state: {} // Tom start-state, lader recalculateSystem klare flow-udfyldningen
     };
-
-    return transitionComponent;
 }
 
 // --- New Inline Form Submit Logic (Phase 15.4) ---
 window.handleInlineComponentSubmit = function (event) {
     if (event) event.preventDefault();
-    console.log("🛠️ [DEBUG SUBMIT] Starter handleInlineComponentSubmit...");
 
     const type = document.getElementById('inlineComponentType').value;
 
@@ -564,8 +523,6 @@ window.handleInlineComponentSubmit = function (event) {
     } else if (parentComp && parentComp.airflow) {
         currentAirflow = parentComp.airflow;
     }
-    
-    console.log("🛠️ [DEBUG SUBMIT] Opfanget currentAirflow:", currentAirflow);
 
     const isInline = !!document.getElementById('ductLength_inline') || !!document.getElementById('systemFittingType_inline');
     const suffix = isInline ? '_inline' : '';
@@ -631,27 +588,20 @@ window.handleInlineComponentSubmit = function (event) {
                 h: parseFloat(component.heightIn || component.height || 0)
             };
 
-            console.log("🛠️ [DEBUG SUBMIT] Tjekker behov for overgang mellem:", { lastOutlet, newInlet });
-
             // Kald din indbyggede funktion
             const calculatedTransition = createTransitionComponent(lastOutlet, newInlet, currentAirflow, systemType, parentComp);
 
             if (calculatedTransition) {
-                console.log("🛠️ [DEBUG SUBMIT] Indsætter udregnet overgang i stateManager:", calculatedTransition);
                 // 1. Indsæt den beregnede overgang
                 stateManager.addSystemComponent(calculatedTransition, actualParentId, actualParentPort, 'inlet');
                 
                 // 2. Kæd komponenten på overgangen
                 actualParentId = calculatedTransition.id;
                 actualParentPort = 'outlet'; 
-            } else {
-                console.log("🛠️ [DEBUG SUBMIT] Ingen overgang oprettet (calculatedTransition returnerede null).");
             }
 
-            console.log("🛠️ [DEBUG SUBMIT] Indsætter hovedkomponent:", component);
             stateManager.addSystemComponent(component, actualParentId, actualParentPort, 'inlet');
         } else {
-            console.log("🛠️ [DEBUG SUBMIT] Indsætter root-komponent (ingen parent):", component);
             stateManager.addSystemComponent(component);
         }
 
@@ -659,9 +609,7 @@ window.handleInlineComponentSubmit = function (event) {
         window.currentAddParentPort = null;
         setCorrectionTargetId(null);
 
-        console.log("🛠️ [DEBUG SUBMIT] Kalder recalculateSystem(). Hold øje med om den overskriver overgangens tryktab!");
         recalculateSystem();
-        
         ui.showSaveStatus('Komponent tilføjet', 'saved');
         ui.updateUndoRedoUI(canUndo(), canRedo());
     }
@@ -1451,7 +1399,6 @@ function recalculateSystem() {
 window.recalculateSystem = recalculateSystem;
 
 
-// Exposed handler for Add button (Legacy / Global approach fallback if needed)
 // Eksponeret handler til den generelle "Tilføj"-knap
 window.handleAddSystemComponent = function(event) {
     if (event) event.preventDefault();
