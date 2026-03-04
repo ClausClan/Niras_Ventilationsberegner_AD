@@ -623,6 +623,259 @@ export function showHelpModal() {
     helpModal.style.display = 'flex';
 }
 
+export function toggleSystemMenu() {
+    const menu = document.getElementById('systemMenu');
+    if (menu) menu.classList.toggle('hidden');
+}
+
+export function printDocumentation(event) {
+    if (event) event.preventDefault();
+    toggleSystemMenu();
+
+    const systemComponents = getSystemComponents();
+
+    if (systemComponents.length === 0) {
+        alert("Systemet er tomt. Tilføj komponenter for at generere dokumentation.");
+        return;
+    }
+
+    // --- Byg tabelrækker ---
+    let totalPressureDrop = 0;
+    const tableRows = systemComponents.map(c => {
+        const state = c.state || {};
+        const props = c.properties || {};
+        const data = state.calculationDetails || {};
+
+        const pressureLoss = state.pressureLoss || 0;
+        totalPressureDrop += pressureLoss;
+
+        let pressureDropPerMeterText = '-';
+        if (c.type === 'straightDuct' && data.pressureDrop) {
+            pressureDropPerMeterText = formatLocalFloat(data.pressureDrop, 2);
+        }
+
+        let detailsText = '-';
+        if (data.lambda) {
+            detailsText = `λ: ${formatLocalFloat(data.lambda, 4)}`;
+        } else if (data.zeta) {
+            detailsText = `ζ: ${formatLocalFloat(data.zeta, 3)}`;
+        }
+
+        let airflowIn = state.airflow_in || c.airflow || 0;
+        let airflowOutText = '-';
+
+        if (c.type && c.type.startsWith('tee_')) {
+            const chosenPath = data.chosenPath || props.path || 'straight';
+            airflowOutText = state.airflow_out ? formatLocalFloat(state.airflow_out['outlet_' + chosenPath] || state.airflow_out['outlet'] || 0, 0) : '-';
+            // If merging, use total outlet
+            if (props.flowType === 'merging') {
+                airflowOutText = state.airflow_out ? formatLocalFloat(state.airflow_out['outlet'] || 0, 0) : '-';
+            }
+        } else {
+            airflowOutText = state.airflow_out ? formatLocalFloat(state.airflow_out['outlet'] || airflowIn, 0) : formatLocalFloat(airflowIn, 0);
+        }
+
+        return `
+            <tr>
+                <td>${c.name}<br><small>${c.details || ''}</small></td>
+                <td>${formatLocalFloat(airflowIn, 0)}</td>
+                <td>${airflowOutText}</td>
+                <td>${state.velocity ? formatLocalFloat(state.velocity, 2) : '-'}</td>
+                <td>${detailsText}</td>
+                <td>${pressureDropPerMeterText}</td>
+                <td>${formatLocalFloat(pressureLoss, 2)}</td>
+            </tr>
+        `;
+    }).join('');
+
+    // --- Saml den fulde HTML til print ---
+    const projectName = document.getElementById('projectName').value;
+    const startAirflow = document.getElementById('system_airflow').value;
+
+    // Handle potential missing label (fallback)
+    const systemTypeInput = document.querySelector('input[name="systemFlowType"]:checked');
+    let systemTypeLabel = 'Ukendt';
+    if (systemTypeInput) {
+        const label = document.querySelector(`label[for="${systemTypeInput.id}"]`);
+        if (label) systemTypeLabel = label.textContent;
+    }
+
+    const temperature = document.getElementById('temperature').value;
+    const printDate = new Date().toLocaleString('da-DK');
+
+    // Hent app-version fra sidfoden (safe check)
+    const footerP = document.querySelector('.app-footer p');
+    const appVersionText = footerP ? footerP.textContent.split(' --- ')[0] : 'Ventilationsberegner';
+
+    const printHtml = `
+        <h1>Dokumentation for Systemberegning</h1>
+        ${projectName ? `<h2>Projekt: ${projectName}</h2>` : ''}
+        <p>Genereret: ${printDate}</p>
+        <h3>Grunddata</h3>
+        <p><strong>Start Luftmængde:</strong> ${startAirflow} m³/h</p>
+        <p><strong>Systemtype:</strong> ${systemTypeLabel}</p>
+        <p><strong>Lufttemperatur:</strong> ${temperature} °C</p>
+        
+        <table class="print-table">
+            <thead>
+                <tr>
+                    <th>Komponent</th>
+                    <th>Luftmængde Ind [m³/h]</th>
+                    <th>Luftmængde Ud [m³/h]</th>
+                    <th>Hastighed [m/s]</th>
+                    <th>Detaljer (ζ/λ)</th>
+                    <th>Tryktab [Pa/m]</th>
+                    <th>Tryktab [Pa]</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${tableRows}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="6"><strong>Samlet Tryktab</strong></td>
+                    <td><strong>${formatLocalFloat(totalPressureDrop, 2)}</strong></td>
+                </tr>
+            </tfoot>
+        </table>
+        
+        <div style="margin-top: 30px; font-size: 8pt; color: #777;">
+            <p>Beregningen er foretaget med NIRAS Ventilationsberegner (${appVersionText})</p>
+        </div>
+    `;
+
+    // --- Opret, print, og fjern print-elementet ---
+    const printContainer = document.createElement('div');
+    printContainer.id = 'print-container';
+    printContainer.innerHTML = printHtml;
+    document.body.appendChild(printContainer);
+
+    window.print();
+
+    document.body.removeChild(printContainer);
+}
+
+// --- Dynamic UI Updates ---
+
+export function updateDimUI() {
+    const mode = document.querySelector('input[name="calculationMode"]:checked').value;
+    const shape = document.querySelector('input[name="ductShape"]:checked').value;
+
+    const calculateInputs = document.getElementById('calculateInputs');
+    const analyzeInputs = document.getElementById('analyzeInputs');
+    const aspectRatioInput = document.getElementById('aspectRatioInput');
+    const analyzeRound = document.getElementById('analyzeRound');
+    const analyzeRectangular = document.getElementById('analyzeRectangular');
+
+    if (calculateInputs) calculateInputs.style.display = mode === 'calculate' ? 'block' : 'none';
+    if (analyzeInputs) analyzeInputs.style.display = mode === 'analyze' ? 'block' : 'none';
+    if (aspectRatioInput) aspectRatioInput.style.display = (mode === 'calculate' && shape === 'rectangular') ? 'block' : 'none';
+    if (analyzeRound) analyzeRound.style.display = (mode === 'analyze' && shape === 'round') ? 'block' : 'none';
+    if (analyzeRectangular) analyzeRectangular.style.display = (mode === 'analyze' && shape === 'rectangular') ? 'flex' : 'none';
+}
+
+export function updateConstraintDefaults() {
+    const constraintTypeSelect = document.getElementById('constraintType');
+    const constraintValueInput = document.getElementById('constraintValue');
+    const unitWrapper = constraintValueInput.parentElement;
+
+    if (constraintTypeSelect.value === 'velocity') {
+        // Only update if value is the default processing one to avoid overwriting user input too aggressively, 
+        // or just set it as the user expects from the old app (always reset).
+        // The old app always reset it:
+        constraintValueInput.value = '5';
+        unitWrapper.dataset.unit = 'm/s';
+    } else { // pressure
+        constraintValueInput.value = '0,5';
+        unitWrapper.dataset.unit = 'Pa/m';
+    }
+}
+
+export function populateDatalists() {
+    const diameterList = document.getElementById('diameter-list');
+    const rectList = document.getElementById('rect-list');
+
+    if (diameterList) {
+        diameterList.innerHTML = '';
+        STANDARD_ROUND_SIZES_MM.forEach(size => {
+            const option = document.createElement('option');
+            option.value = size;
+            diameterList.appendChild(option);
+        });
+    }
+
+    if (rectList) {
+        rectList.innerHTML = '';
+        STANDARD_RECT_SIZES_MM.forEach(size => {
+            const option = document.createElement('option');
+            option.value = size;
+            rectList.appendChild(option);
+        });
+
+    }
+}
+
+export function showConfirm(message, onConfirm) {
+    const modal = document.getElementById('confirmModal');
+    const msgEl = document.getElementById('confirmMessage');
+    const btnOk = document.getElementById('btnConfirmOk');
+    const btnCancel = document.getElementById('btnConfirmCancel');
+
+    if (!modal || !msgEl || !btnOk || !btnCancel) {
+        console.error('Confirm modal elements missing!');
+        return;
+    }
+
+    msgEl.textContent = message;
+    modal.classList.remove('hidden');
+
+    // Remove old listeners by cloning
+    const newBtnOk = btnOk.cloneNode(true);
+    const newBtnCancel = btnCancel.cloneNode(true);
+    btnOk.parentNode.replaceChild(newBtnOk, btnOk);
+    btnCancel.parentNode.replaceChild(newBtnCancel, btnCancel);
+
+    newBtnOk.addEventListener('click', () => {
+        modal.classList.add('hidden');
+        onConfirm();
+    });
+
+    newBtnCancel.addEventListener('click', () => {
+        modal.classList.add('hidden');
+    });
+}
+
+export function updateUndoRedoUI(canUndo, canRedo) {
+    const undoBtn = document.getElementById('undoButton');
+    const redoBtn = document.getElementById('redoButton');
+
+    if (undoBtn) undoBtn.disabled = !canUndo;
+    if (redoBtn) redoBtn.disabled = !canRedo;
+}
+
+let saveStatusTimeout;
+export function showSaveStatus(status, type = 'saved') {
+    const statusEl = document.getElementById('saveStatus');
+    if (!statusEl) return;
+
+    statusEl.textContent = status;
+    statusEl.className = 'save-status visible';
+
+    if (type === 'saving') {
+        statusEl.classList.add('saving');
+    }
+
+    // Clear previous timeout
+    if (saveStatusTimeout) clearTimeout(saveStatusTimeout);
+
+    // Auto-hide after 2 seconds if just "Saved"
+    if (type === 'saved') {
+        saveStatusTimeout = setTimeout(() => {
+            statusEl.classList.remove('visible');
+        }, 2000);
+    }
+}
+
 
 // --- Helper UI Functions ---
 
@@ -1020,7 +1273,7 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
             break;
         case 'tee_sym':
         case 'tee_asym': {
-            // ALTID BRUG DEN NYE RETNINGSLØSE UI I SYSTEM-BUILDEREN (Vi har fjernet isSystemBuilder tjekket permanent)
+            // ALTID BRUG DEN NYE RETNINGSLØSE UI I SYSTEM-BUILDEREN
             const isSym = fittingType === 'tee_sym';
             const diameterInputs = isSym ?
                 `<div class="input-group"><label>Diameter (alle grene)</label><select id="${id('sys_tee_d_in')}" class="input-field">${roundOptions}</select></div>` :
@@ -1116,10 +1369,8 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
         if (p.d_in) setVal(id('sys_tee_d_in'), p.d_in);
         if (p.d_straight) setVal(id('sys_tee_d_straight'), p.d_straight);
         if (p.d_branch) setVal(id('sys_tee_d_branch'), p.d_branch);
-        if (p.d_straight) setVal(id('sys_tee_d_out1'), p.d_straight);
-        if (p.d_branch) setVal(id('sys_tee_d_out2'), p.d_branch);
-        if (p.q_straight) setVal(id('sys_tee_q_out1'), p.q_straight);
-        if (p.q_branch) setVal(id('sys_tee_q_out2'), p.q_branch);
+        if (p.d_out1) setVal(id('sys_tee_d_out1'), p.d_out1);
+        if (p.d_out2) setVal(id('sys_tee_d_out2'), p.d_out2);
         if (p.orientation) setVal(id('sys_orientation'), p.orientation);
 
         if (p.ambientTemp !== undefined) setVal(id('sys_ambient'), p.ambientTemp);
