@@ -223,7 +223,8 @@ export function renderSystem() {
     function calculateCriticalPath(node) {
         if (!node || node.isIncluded === false) return { loss: 0, path: [] };
 
-        const isTee = node.type && node.type.startsWith('tee');
+        const pType = node.fittingType || (node.properties && node.properties.type) || node.type || '';
+        const isTee = pType.startsWith('tee_');
         const pLoss = (node.state && node.state.pressureLoss) ? node.state.pressureLoss : 0;
         
         let maxPathLoss = 0;
@@ -295,7 +296,9 @@ export function renderSystem() {
         let airflowText = `${formatLocalFloat(airflowDisp, 0)} m³/h`;
         let pressureText = `${formatLocalFloat(pressureLoss, 2)} Pa`;
 
-        if (c.type && c.type.startsWith('tee_')) {
+        const pType = c.fittingType || (c.properties && c.properties.type) || c.type || '';
+
+        if (pType.startsWith('tee_')) {
             const props = c.properties || {};
 
             let q_in = airflowDisp;
@@ -305,7 +308,7 @@ export function renderSystem() {
             let loss_s = state.portPressureLoss ? state.portPressureLoss['outlet_straight'] : 0;
             let loss_b = state.portPressureLoss ? state.portPressureLoss['outlet_branch'] : 0;
 
-            if (c.type === 'tee_bullhead') {
+            if (pType === 'tee_bullhead') {
                 airflowText = `Ind: ${formatLocalFloat(q_in, 0)}<br>G1: ${formatLocalFloat(q_s || 0, 0)} | G2: ${formatLocalFloat(q_b || 0, 0)}`;
                 pressureText = `G1: ${formatLocalFloat(loss_s, 2)} Pa<br>G2: ${formatLocalFloat(loss_b, 2)} Pa`;
             } else {
@@ -325,12 +328,15 @@ export function renderSystem() {
             warningHtml += ` <button class="details-btn" style="font-size: 0.8rem; padding: 2px 4px;" onclick="window.requestCorrection('${c.id}')">[+Pa]</button>`;
         }
 
+        // --- Korrigeret og Fejlsikret Temperatur Visning ---
         let tempText = '-';
-        if (state.temperature_in !== undefined && state.temperature_out && state.temperature_out['outlet'] !== undefined) {
-            if (Math.abs(state.temperature_in - state.temperature_out['outlet']) > 0.05) {
-                tempText = `${formatLocalFloat(state.temperature_in, 1)} → ${formatLocalFloat(state.temperature_out['outlet'], 1)} °C`;
+        let t_out_node = state.temperature_out ? (state.temperature_out['outlet'] !== undefined ? state.temperature_out['outlet'] : state.temperature_out['outlet_straight']) : undefined;
+        
+        if (state.temperature_in !== undefined && t_out_node !== undefined && !isNaN(state.temperature_in) && !isNaN(t_out_node)) {
+            if (Math.abs(Number(state.temperature_in) - Number(t_out_node)) > 0.05) {
+                tempText = `${formatLocalFloat(Number(state.temperature_in), 1)} → ${formatLocalFloat(Number(t_out_node), 1)} °C`;
             } else {
-                tempText = `${formatLocalFloat(state.temperature_in, 1)} °C`;
+                tempText = `${formatLocalFloat(Number(state.temperature_in), 1)} °C`;
             }
         }
 
@@ -368,7 +374,6 @@ export function renderSystem() {
         `;
 
         let expectedPorts = ['outlet'];
-        const pType = c.type || '';
         if (pType.startsWith('tee_')) {
             expectedPorts = ['outlet_straight', 'outlet_branch'];
         }
@@ -498,18 +503,27 @@ export function showSystemComponentDetails(id) {
     modalTitle.innerText = `Detaljer for ${component.name}`;
     let bodyHtml = '';
 
-    const t_in = state.temperature_in !== undefined ? state.temperature_in : '-';
-    let t_out_val = state.temperature_out ? (state.temperature_out['outlet_straight'] || state.temperature_out['outlet'] || '-') : '-';
+    // --- Korrigeret og Fejlsikret Termodynamik Visning ---
+    const t_in = state.temperature_in !== undefined ? Number(state.temperature_in) : undefined;
+    let t_out_val = state.temperature_out ? (state.temperature_out['outlet'] !== undefined ? state.temperature_out['outlet'] : state.temperature_out['outlet_straight']) : undefined;
 
     let thermoHtml = '';
-    if (t_in !== '-') {
+    if (t_in !== undefined && !isNaN(t_in)) {
         thermoHtml = `<hr><p><strong>Termodynamik</strong></p>
-            <p><strong>Temperatur ind:</strong> ${formatLocalFloat(t_in, 1)} °C</p>
-            <p><strong>Temperatur ud:</strong> ${formatLocalFloat(t_out_val, 1)} °C</p>`;
-        if (state.heatLoss !== undefined && state.heatLoss !== 0) {
-            thermoHtml += `<p><strong>Varmetab til omgivelser:</strong> ${formatLocalFloat(state.heatLoss, 0)} W</p>`;
+            <p><strong>Temperatur ind:</strong> ${formatLocalFloat(t_in, 1)} °C</p>`;
+        
+        if (t_out_val !== undefined && !isNaN(Number(t_out_val))) {
+             thermoHtml += `<p><strong>Temperatur ud:</strong> ${formatLocalFloat(Number(t_out_val), 1)} °C</p>`;
+        } else {
+             thermoHtml += `<p><strong>Temperatur ud:</strong> - </p>`;
+        }
+
+        if (state.heatLoss !== undefined && state.heatLoss !== 0 && !isNaN(Number(state.heatLoss))) {
+            thermoHtml += `<p><strong>Varmetab til omgivelser:</strong> ${formatLocalFloat(Number(state.heatLoss), 0)} W</p>`;
         }
     }
+
+    const pType = component.fittingType || (component.properties && component.properties.type) || component.type || '';
 
     if (component.type === 'straightDuct') {
         const dpPerMeter = data.pressureDrop || 0;
@@ -522,8 +536,8 @@ export function showSystemComponentDetails(id) {
             <p><strong>Tryktab pr. meter (dp) =</strong> (λ / Dₕ) * (ρ/2) * v² = <strong>${formatLocalFloat(dpPerMeter, 2)} Pa/m</strong></p>
             <p><strong>Samlet Tryktab =</strong> dp * Længde = ${formatLocalFloat(dpPerMeter, 2)} * ${formatLocalFloat(component.properties.length || 1, 2)} = <strong>${formatLocalFloat(state.pressureLoss, 2)} Pa</strong></p>${thermoHtml}`;
 
-    } else if (component.type.includes('tee') || (data.type && data.type.includes('tee'))) {
-        const title = component.type === 'tee_bullhead' ? 'T-stykke (Dobbelt Afgrening)' : (data.type === 'tee_merge' ? `T-stykke (Samle)` : `T-stykke (Dele)`);
+    } else if (pType.includes('tee')) {
+        const title = pType === 'tee_bullhead' ? 'T-stykke (Dobbelt Afgrening)' : (data.type === 'tee_merge' ? `T-stykke (Samle)` : `T-stykke (Dele)`);
         
         let s_html = '';
         let b_html = '';
@@ -664,7 +678,9 @@ export function printDocumentation(event) {
         let airflowIn = state.airflow_in || c.airflow || 0;
         let airflowOutText = '-';
 
-        if (c.type && c.type.startsWith('tee_')) {
+        const pType = c.fittingType || props.type || c.type || '';
+
+        if (pType.startsWith('tee_')) {
             const chosenPath = data.chosenPath || props.path || 'straight';
             airflowOutText = state.airflow_out ? formatLocalFloat(state.airflow_out['outlet_' + chosenPath] || state.airflow_out['outlet'] || 0, 0) : '-';
             // If merging, use total outlet
@@ -1228,6 +1244,8 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
     let fittingType;
     if (initialData && initialData.type) {
         fittingType = (initialData.properties && initialData.properties.type) ? initialData.properties.type : initialData.type;
+        // Hvis den har fittingType defineret på rod-niveau (som auto-overgange), brug den i stedet
+        if (initialData.fittingType) fittingType = initialData.fittingType;
     } else {
         const typeSelect = document.getElementById(`systemFittingType${suffix}`);
         fittingType = typeSelect ? typeSelect.value : null;
@@ -1481,11 +1499,12 @@ export function showEditForm(id) {
     `;
 
     const container = document.getElementById(containerId);
+    const pType = component.fittingType || (component.properties && component.properties.type) || component.type || '';
 
     if (component.type === 'straightDuct') {
         renderSystemDuctInputs(container, component);
-    } else if (component.type === 'fitting' || component.type.startsWith('bend') || component.type.startsWith('tee') || component.type.startsWith('expansion') || component.type.startsWith('contraction') || component.type.startsWith('transition')) {
-        // We use renderSystemFittingInputs which handles type based on initialData
+    } else if (component.type === 'fitting' || pType.startsWith('bend') || pType.startsWith('tee') || pType.startsWith('expansion') || pType.startsWith('contraction') || pType.startsWith('transition')) {
+        // Vi bruger pType for at være sikre på, at renderSystemFittingInputs kender den præcise overgang
         renderSystemFittingInputs(container, component);
     } else if (component.type === 'manualLoss') {
         // Manual rendering for manual loss
