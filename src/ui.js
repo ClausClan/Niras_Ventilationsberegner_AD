@@ -674,38 +674,62 @@ export function printDocumentation(event) {
     if (event) event.preventDefault();
     toggleSystemMenu();
 
-    const systemComponents = getSystemComponents();
-
-    if (systemComponents.length === 0) {
+    const systemTree = window.stateManager ? window.stateManager.getSystemTree() : [];
+    
+    if (!systemTree || systemTree.length === 0) {
         alert("Systemet er tomt. Tilføj komponenter for at generere dokumentation.");
         return;
     }
 
-    // --- Byg tabelrækker ---
-    let totalPressureDrop = 0;
-    const tableRows = systemComponents.map(c => {
+    // --- Beregn kritisk vej (Samlet tryktab) ---
+    function calculateCriticalPath(node) {
+        if (!node || node.isIncluded === false) return { loss: 0 };
+        const pType = node.fittingType || (node.properties && node.properties.type) || node.type || '';
+        const isTee = pType.startsWith('tee_');
+        const pLoss = (node.state && node.state.pressureLoss) ? node.state.pressureLoss : 0;
+        let maxPathLoss = 0;
+
+        if (isTee) {
+            const ports = ['outlet_straight', 'outlet_branch', 'outlet_path1', 'outlet_path2'];
+            ports.forEach(port => {
+                let portLoss = (node.state && node.state.portPressureLoss && node.state.portPressureLoss[port] !== undefined) ? node.state.portPressureLoss[port] : 0;
+                let childLoss = 0;
+                if (node.children && node.children[port] && node.children[port].length > 0) {
+                    childLoss = calculateCriticalPath(node.children[port][0]).loss;
+                }
+                if (portLoss + childLoss > maxPathLoss) maxPathLoss = portLoss + childLoss;
+            });
+            return { loss: maxPathLoss };
+        } else {
+            if (node.children) {
+                Object.values(node.children).forEach(childArray => {
+                    childArray.forEach(child => {
+                        let childLoss = calculateCriticalPath(child).loss;
+                        if (childLoss > maxPathLoss) maxPathLoss = childLoss;
+                    });
+                });
+            }
+            return { loss: pLoss + maxPathLoss };
+        }
+    }
+
+    const criticalResult = calculateCriticalPath(systemTree[0]);
+    const globalCriticalPressureDrop = criticalResult.loss;
+
+    // --- Byg tabelrækker rekursivt for at vise træstruktur ---
+    let tableRows = '';
+    function traversePrint(c, depth, labelPath) {
         const state = c.state || {};
         const props = c.properties || {};
         const data = state.calculationDetails || {};
+        const isIncluded = c.isIncluded !== false;
+        
+        const pressureLoss = isIncluded ? (state.pressureLoss || 0) : 0;
+        const velocity = isIncluded && state.velocity ? formatLocalFloat(state.velocity, 2) : '-';
 
-        const pressureLoss = state.pressureLoss || 0;
-        totalPressureDrop += pressureLoss;
-
-        let pressureDropPerMeterText = '-';
-        if (c.type === 'straightDuct' && data.pressureDrop) {
-            pressureDropPerMeterText = formatLocalFloat(data.pressureDrop, 2);
-        }
-
-        let detailsText = '-';
-        if (data.lambda) {
-            detailsText = `λ: ${formatLocalFloat(data.lambda, 4)}`;
-        } else if (data.zeta) {
-            detailsText = `ζ: ${formatLocalFloat(data.zeta, 3)}`;
-        }
-
+        // Luftmængde
         let airflowIn = state.airflow_in || c.airflow || 0;
         let airflowOutText = '-';
-
         const pType = c.fittingType || props.type || c.type || '';
 
         if (pType.startsWith('tee_')) {
@@ -727,24 +751,99 @@ export function printDocumentation(event) {
             airflowOutText = state.airflow_out ? formatLocalFloat(state.airflow_out['outlet'] || airflowIn, 0) : formatLocalFloat(airflowIn, 0);
         }
 
-        return `
-            <tr>
-                <td>${c.name}<br><small>${c.details || ''}</small></td>
-                <td>${formatLocalFloat(airflowIn, 0)}</td>
-                <td>${airflowOutText}</td>
-                <td>${state.velocity ? formatLocalFloat(state.velocity, 2) : '-'}</td>
+        // Temperatur
+        let tIn = parseFloat(state.temperature_in);
+        let tOutRaw = state.temperature_out ? 
+            (state.temperature_out['outlet'] !== undefined ? state.temperature_out['outlet'] : 
+             (state.temperature_out['outlet_straight'] !== undefined ? state.temperature_out['outlet_straight'] : 
+              state.temperature_out['outlet_path1'])) 
+            : undefined;
+        let tOut = parseFloat(tOutRaw);
+        let tempText = '-';
+        
+        if (isIncluded && !isNaN(tIn) && !isNaN(tOut)) {
+            if (Math.abs(tIn - tOut) > 0.05) {
+                tempText = `${formatLocalFloat(tIn, 1)} &rarr; ${formatLocalFloat(tOut, 1)}`;
+            } else {
+                tempText = `${formatLocalFloat(tIn, 1)}`;
+            }
+        }
+
+        // Isolering
+        let isoText = '-';
+        if (props.isoThick !== undefined && props.isoThick > 0) {
+            isoText = `${props.isoThick} mm<br><span style="font-size:0.8em;color:#666;">λ: ${props.isoLambda || 0.037}</span>`;
+        }
+
+        // Detaljer (Zeta, tryktab pr m)
+        let detailsText = '-';
+        if (c.type === 'straightDuct' && data.pressureDrop) {
+            detailsText = `λ: ${formatLocalFloat(data.lambda, 4)}<br><span style="font-size:0.8em;color:#666;">${formatLocalFloat(data.pressureDrop, 2)} Pa/m</span>`;
+        } else if (state.zeta !== undefined && state.zeta !== null) {
+            detailsText = `ζ: ${formatLocalFloat(state.zeta, 3)}`;
+        } else if (data.zeta !== undefined) {
+            detailsText = `ζ: ${formatLocalFloat(data.zeta, 3)}`;
+        }
+
+        // Træ-indentering
+        const indent = Math.max(0, depth * 20);
+        let treePrefix = labelPath ? `<div style="font-size:10px; color:#555; margin-bottom:2px;">&#8627; ${labelPath}</div>` : '';
+        let nameHtml = `<strong>${c.name}</strong>${isIncluded ? '' : ' <em style="color:#999;">(Deaktiveret)</em>'}<br><span style="font-size:0.8em;color:#666;">${c.details || ''}</span>`;
+
+        tableRows += `
+            <tr style="${isIncluded ? '' : 'color:#999;'}">
+                <td style="padding-left: ${indent + 8}px;">
+                    ${treePrefix}
+                    ${nameHtml}
+                </td>
+                <td>Ind: ${formatLocalFloat(airflowIn, 0)}<br>Ud: ${airflowOutText}</td>
+                <td>${velocity}</td>
+                <td>${tempText}</td>
+                <td>${isoText}</td>
                 <td>${detailsText}</td>
-                <td>${pressureDropPerMeterText}</td>
-                <td>${formatLocalFloat(pressureLoss, 2)}</td>
+                <td><strong>${formatLocalFloat(pressureLoss, 2)}</strong></td>
             </tr>
         `;
-    }).join('');
+
+        // Gennemløb børn
+        let expectedPorts = ['outlet'];
+        if (pType.startsWith('tee_')) {
+            if (pType === 'tee_bullhead') {
+                expectedPorts = ['outlet_path1', 'outlet_path2'];
+            } else {
+                expectedPorts = ['outlet_straight', 'outlet_branch'];
+            }
+        }
+
+        expectedPorts.forEach(portName => {
+            let childLabel = '';
+            let childDepth = depth;
+            if (portName === 'outlet_branch' || portName === 'outlet_straight') {
+                childLabel = portName === 'outlet_branch' ? 'Afgrening' : 'Ligeud';
+                childDepth = depth + 1;
+            } else if (portName === 'outlet_path1' || portName === 'outlet_path2') {
+                childLabel = portName === 'outlet_path2' ? 'Gren 2' : 'Gren 1';
+                childDepth = depth + 1;
+            }
+
+            if (c.children && c.children[portName] && c.children[portName].length > 0) {
+                c.children[portName].forEach(child => {
+                    traversePrint(child, childDepth, childLabel);
+                });
+            }
+        });
+    }
+
+    if (systemTree.length > 0) {
+        systemTree.forEach(root => {
+            traversePrint(root, 0, '');
+        });
+    }
 
     // --- Saml den fulde HTML til print ---
     const projectName = document.getElementById('projectName').value;
     const startAirflow = document.getElementById('system_airflow').value;
 
-    // Handle potential missing label (fallback)
     const systemTypeInput = document.querySelector('input[name="systemFlowType"]:checked');
     let systemTypeLabel = 'Ukendt';
     if (systemTypeInput) {
@@ -755,28 +854,33 @@ export function printDocumentation(event) {
     const temperature = document.getElementById('temperature').value;
     const printDate = new Date().toLocaleString('da-DK');
 
-    // Hent app-version fra sidfoden (safe check)
     const footerP = document.querySelector('.app-footer p');
     const appVersionText = footerP ? footerP.textContent.split(' --- ')[0] : 'Ventilationsberegner';
 
     const printHtml = `
+        <style>
+            .print-table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; font-family: sans-serif; }
+            .print-table th, .print-table td { border: 1px solid #ccc; padding: 8px; text-align: left; vertical-align: middle; }
+            .print-table th { background-color: #f5f5f5; }
+            body { font-family: sans-serif; color: #333; }
+        </style>
         <h1>Dokumentation for Systemberegning</h1>
         ${projectName ? `<h2>Projekt: ${projectName}</h2>` : ''}
         <p>Genereret: ${printDate}</p>
         <h3>Grunddata</h3>
         <p><strong>Start Luftmængde:</strong> ${startAirflow} m³/h</p>
         <p><strong>Systemtype:</strong> ${systemTypeLabel}</p>
-        <p><strong>Lufttemperatur:</strong> ${temperature} °C</p>
+        <p><strong>Lufttemperatur (Start):</strong> ${temperature} °C</p>
         
         <table class="print-table">
             <thead>
                 <tr>
-                    <th>Komponent</th>
-                    <th>Luftmængde Ind [m³/h]</th>
-                    <th>Luftmængde Ud [m³/h]</th>
+                    <th>Komponent (Træstruktur)</th>
+                    <th>Luftmængde [m³/h]</th>
                     <th>Hastighed [m/s]</th>
-                    <th>Detaljer (ζ/λ)</th>
-                    <th>Tryktab [Pa/m]</th>
+                    <th>Temp. (Ind &rarr; Ud) [°C]</th>
+                    <th>Isolering</th>
+                    <th>Detaljer (&zeta;/&lambda;)</th>
                     <th>Tryktab [Pa]</th>
                 </tr>
             </thead>
@@ -785,8 +889,8 @@ export function printDocumentation(event) {
             </tbody>
             <tfoot>
                 <tr>
-                    <td colspan="6"><strong>Samlet Tryktab</strong></td>
-                    <td><strong>${formatLocalFloat(totalPressureDrop, 2)}</strong></td>
+                    <td colspan="6" style="text-align:right;"><strong>Samlet Systemtryktab (Kritisk Vej)</strong></td>
+                    <td><strong>${formatLocalFloat(globalCriticalPressureDrop, 2)} Pa</strong></td>
                 </tr>
             </tfoot>
         </table>
