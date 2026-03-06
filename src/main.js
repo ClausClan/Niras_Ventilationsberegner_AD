@@ -1077,7 +1077,6 @@ function recalculateSystem() {
         let currentParentPort = parentPort;
 
         // VIGTIGT: Vi bruger ALTID den visuelle 'inletDimension' som tilknytningspunkt.
-        // Fjerner den gamle "merging" override for at sikre at tegneretningen fastholdes.
         let childAttachDim = newCalc.inletDimension;
 
         if (incomingDim && childAttachDim && !physics.areDimensionsEqual(incomingDim, childAttachDim)) {
@@ -1113,7 +1112,6 @@ function recalculateSystem() {
             }
 
             let portDim = null;
-            // Fjerner den gamle "merging" override. Visuel afgang er ALTID 'outletDimension' for porten.
             if (comp.state.outletDimension && comp.state.outletDimension[outPort]) {
                 portDim = comp.state.outletDimension[outPort];
             } else if (comp.state.outletDimension && comp.state.outletDimension['outlet']) {
@@ -1138,19 +1136,25 @@ function recalculateSystem() {
         const childrenEdges = stateManager.getGraph().edges.filter(e => e.from === nodeId); 
         comp.state.heatLoss = 0; 
 
+        // --- FORBEDRET OVERFLADE BEREGNING (Fanger nu alt!) ---
         const getSurfaceProps = (c) => {
             let length = 0;
             let perimeter = 0;
             let hasSurface = false;
 
             if (c.type === 'straightDuct') {
-                length = c.properties.length;
-                if (c.state.inletDimension && c.state.inletDimension.shape === 'round') {
-                    perimeter = Math.PI * (c.state.inletDimension.d / 1000);
-                } else if (c.state.inletDimension) {
-                    perimeter = 2 * ((c.state.inletDimension.w / 1000) + (c.state.inletDimension.h / 1000));
+                length = c.properties.length || 0;
+                const isRound = (c.state && c.state.inletDimension && c.state.inletDimension.shape === 'round') || c.properties.shape === 'round';
+                
+                if (isRound) {
+                    const d = (c.state && c.state.inletDimension && c.state.inletDimension.d) || c.properties.diameter || c.properties.d || 200;
+                    perimeter = Math.PI * (d / 1000);
+                } else {
+                    const w = (c.state && c.state.inletDimension && c.state.inletDimension.w) || c.properties.sideB || c.properties.w || 200;
+                    const h = (c.state && c.state.inletDimension && c.state.inletDimension.h) || c.properties.sideA || c.properties.h || 200;
+                    perimeter = 2 * ((w / 1000) + (h / 1000));
                 }
-                hasSurface = true;
+                if (length > 0) hasSurface = true;
             } else if (c.properties && (c.properties.type.includes('expansion') || c.properties.type.includes('contraction') || c.properties.type.includes('transition'))) {
                 const p = c.properties;
                 const dim1_d = p.d1 || p.d || 0, dim1_h = p.h1 || p.h || 0, dim1_w = p.w1 || p.w || 0;
@@ -1170,7 +1174,26 @@ function recalculateSystem() {
                 if (length < 0.1 || isNaN(length) || !isFinite(length)) length = 0.5; 
                 
                 perimeter = Math.PI * (d1_eq + d2_eq) / 2;
-                hasSurface = true;
+                if (length > 0) hasSurface = true;
+            } else if (c.properties && (c.properties.type === 'bend_circ' || c.properties.type === 'bend_rect')) {
+                const p = c.properties;
+                if (p.type === 'bend_circ') {
+                    const d = p.d || 200;
+                    length = 2 * Math.PI * ((p.rd || 1) * d / 1000) * ((p.angle || 90) / 360);
+                    perimeter = Math.PI * (d / 1000);
+                } else {
+                    const w = p.w || 200;
+                    const h = p.h || 200;
+                    length = 2 * Math.PI * ((p.rh || 1) * w / 1000) * ((p.angle || 90) / 360);
+                    perimeter = 2 * ((w + h) / 1000);
+                }
+                if (length > 0) hasSurface = true;
+            } else if (c.properties && c.properties.type.includes('tee')) {
+                const p = c.properties;
+                const d_main = p.d_in || 200; 
+                length = d_main / 1000;
+                perimeter = Math.PI * length;
+                if (length > 0) hasSurface = true;
             }
             return { hasSurface, length, perimeter };
         };
@@ -1195,6 +1218,13 @@ function recalculateSystem() {
                 const q_m_kgs = (currentFlow / 3600) * physics.getAirProperties(t_in).RHO;
                 const res = physics.calculateTemperatureDrop(t_in, amb, surface.length, surface.perimeter, q_m_kgs, isoTh, isoL, globalParams.globalRH);
                 t_out['outlet'] = res.t_out;
+                
+                // Opdater også gren-udgangene for Bøjninger og T-stykker
+                t_out['outlet_straight'] = res.t_out;
+                t_out['outlet_branch'] = res.t_out;
+                t_out['outlet_path1'] = res.t_out;
+                t_out['outlet_path2'] = res.t_out;
+                
                 comp.state.heatLoss = res.q_loss;
             }
             
