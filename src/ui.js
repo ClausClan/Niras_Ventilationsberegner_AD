@@ -1287,7 +1287,7 @@ export function handleComponentTypeChange() {
         systemComponentInputsContainer.innerHTML = `
             <div class="input-group"><label for="manualPressureLoss">Tryktab</label><div class="input-unit-wrapper" data-unit="Pa"><input type="text" id="manualPressureLoss" class="input-field" required></div></div>
             <div class="input-group"><label for="manualDescription">Beskrivelse</label><input type="text" id="manualDescription" class="input-field" placeholder="f.eks. Spjæld, Rist, Filter"></div>
-            <button type="button" class="button primary" onclick="window.handleInlineComponentSubmit(event)">Tilføj til System</button>`;
+            <button type="button" class="button primary" onclick="window.handleInlineComponentSubmit(event, '')">Tilføj til System</button>`;
     }
 }
 
@@ -1299,7 +1299,7 @@ export function renderSystemDuctInputs(container, initialData = null) {
     const isInlineAdd = container.id.startsWith('add_container') || container.id === 'inlineFittingInputsContainer' || container.id === 'inlineDuctInputsContainer';
     const isEditMode = !isAddMode && initialData && initialData.id;
     const suffix = isEditMode ? '_edit' : (isInlineAdd ? '_inline' : '');
-    const btnAction = initialData ? `window.handleUpdateComponent('${initialData.id}')` : 'window.handleInlineComponentSubmit(event)';
+    const btnAction = initialData ? `window.handleUpdateComponent('${initialData.id}')` : `window.handleInlineComponentSubmit(event, '${suffix}')`;
     const btnText = initialData ? 'Opdater Komponent' : 'Tilføj til System';
 
     // Bestem default form baseret på parentDim (hvis vi tilføjer inline)
@@ -1750,7 +1750,7 @@ export function handleInlineComponentTypeChange(containerId) {
     if (type === 'straightDuct') {
         renderSystemDuctInputs(container);
         const btn = container.querySelector('button');
-        if (btn) btn.setAttribute('onclick', 'window.handleInlineComponentSubmit(event)');
+        if (btn) btn.setAttribute('onclick', `window.handleInlineComponentSubmit(event, '_inline')`);
 
     } else if (type === 'fitting') {
         // Filtrer menuen automatisk hvis vi kender formen på parent
@@ -1818,7 +1818,7 @@ export function handleInlineComponentTypeChange(containerId) {
         container.innerHTML = `
             <div class="input-group"><label for="manualPressureLoss">Tryktab</label><div class="input-unit-wrapper" data-unit="Pa"><input type="text" id="manualPressureLoss" class="input-field" required></div></div>
             <div class="input-group"><label for="manualDescription">Beskrivelse</label><input type="text" id="manualDescription" class="input-field" placeholder="f.eks. Spjæld, Rist, Filter"></div>
-        <button type="button" class="button primary" onclick="window.handleInlineComponentSubmit(event)">Tilføj til System</button>`;
+        <button type="button" class="button primary" onclick="window.handleInlineComponentSubmit(event, '_inline')">Tilføj til System</button>`;
     }
 }
 
@@ -1827,7 +1827,7 @@ export function handleInlineComponentTypeChange(containerId) {
 window.handleValidatedSubmit = function(event, suffix) {
     if (!validateTeeFlows(suffix)) return;
     if (typeof window.handleInlineComponentSubmit === 'function') {
-        window.handleInlineComponentSubmit(event);
+        window.handleInlineComponentSubmit(event, suffix);
     }
 };
 

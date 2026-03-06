@@ -1014,6 +1014,10 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
 }
 
 function recalculateSystem() {
+    if (typeof window.stateManager.pauseHistory === 'function') {
+        window.stateManager.pauseHistory();
+    }
+
     const graph = stateManager.getGraph();
     const userNodes = {};
     const originalEdges = [...graph.edges];
@@ -1314,16 +1318,29 @@ function recalculateSystem() {
         rootIds.forEach(rootId => { traverseAndCalculateThermodynamics(rootId, temp); });
     }
 
+    if (typeof window.stateManager.resumeHistory === 'function') {
+        window.stateManager.resumeHistory();
+    }
+
     ui.renderSystem();
     ui.handleComponentTypeChange();
 }
 window.recalculateSystem = recalculateSystem;
 
 // --- INDSÆTTELSE AF NY KOMPONENT & AUTO-OVERGANG ---
-window.handleInlineComponentSubmit = function (event) {
+window.handleInlineComponentSubmit = function (event, passedSuffix) {
     if (event) event.preventDefault();
 
-    const type = document.getElementById('inlineComponentType').value;
+    let suffix = passedSuffix;
+    if (typeof suffix === 'undefined') {
+        const isInlineDOM = !!document.getElementById('inlineComponentType');
+        suffix = isInlineDOM ? '_inline' : '';
+    }
+
+    const typeSelectId = suffix === '_inline' ? 'inlineComponentType' : 'systemComponentType';
+    const typeEl = document.getElementById(typeSelectId);
+    if (!typeEl) return alert("Fejl: Kunne ikke finde komponenttypen.");
+    const type = typeEl.value;
 
     const temp = parseLocalFloat(document.getElementById('temperature').value);
     if (isNaN(temp)) return alert("Ugyldig temperatur.");
@@ -1345,15 +1362,17 @@ window.handleInlineComponentSubmit = function (event) {
         currentAirflow = parentComp.airflow;
     }
 
-    const isInline = !!document.getElementById('ductLength_inline') || !!document.getElementById('systemFittingType_inline');
-    const suffix = isInline ? '_inline' : '';
-
     let component = null;
 
     if (type === 'straightDuct') {
         component = getDuctData(suffix);
     } else if (type === 'fitting') {
-        const fittingTypeSelect = document.getElementById('inlineFittingType') || document.getElementById('systemFittingType' + suffix);
+        let fittingTypeSelect;
+        if (suffix === '_inline') {
+            fittingTypeSelect = document.getElementById('inlineFittingType') || document.getElementById('systemFittingType_inline');
+        } else {
+            fittingTypeSelect = document.getElementById('systemFittingType' + suffix);
+        }
         const fittingType = fittingTypeSelect ? fittingTypeSelect.value : null;
         component = getFittingData(suffix, fittingType);
     } else if (type === 'manualLoss') {
