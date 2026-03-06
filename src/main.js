@@ -811,14 +811,12 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
 
             calculationDetails = { A_m2: A, v_ms: v, zeta, Pdyn_Pa };
         } else if (p.type && (p.type.includes('expansion') || p.type.includes('contraction') || p.type.includes('transition'))) {
-            // --- KORREKT LÆSNING AF MANUELLE OVERGANGE ---
             const isExhaust = globalParams.globalFlowType === 'merging';
 
             let A1_visual, A2_visual;
             const shape1 = p.inletShape || (p.type.includes('rect') && !p.type.includes('transition') ? 'rect' : (p.type === 'transition_rect_round' ? 'rect' : 'round'));
             const shape2 = p.outletShape || (p.type.includes('rect') && !p.type.includes('transition') ? 'rect' : (p.type === 'transition_round_rect' ? 'rect' : 'round'));
             
-            // Fanger variabler fra manual input ELLER fra eksisterende graf node
             let dim1_d = p.d1 || p.d || 0, dim1_h = p.h1 || p.h || 0, dim1_w = p.w1 || p.w || 0;
             let dim2_d = p.d2 || p.d || 0, dim2_h = p.h2 || p.h || 0, dim2_w = p.w2 || p.w || 0;
             
@@ -991,6 +989,23 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
                 heatLoss: q_loss_val
             };
         }
+
+        // Tildel newCalc her for standard fittings (bends og transitions)
+        if (p.type && !p.type.includes('tee')) {
+            newCalc = {
+                airflow_in: incomingFlow,
+                airflow_out: airflow_out,
+                velocity: v,
+                pressureLoss: pressureLoss,
+                zeta: zeta,
+                inletDimension: inletDim, 
+                outletDimension: { 'outlet': outletDim },
+                calculationDetails: calculationDetails,
+                temperature_in: incomingTemp,
+                temperature_out: temp_out,
+                heatLoss: q_loss_val
+            };
+        }
     }
 
     return newCalc;
@@ -1146,13 +1161,16 @@ function recalculateSystem() {
                     perimeter = 2 * ((c.state.inletDimension.w / 1000) + (c.state.inletDimension.h / 1000));
                 }
                 hasSurface = true;
-            } else if (c.properties && (c.properties.type === 'expansion' || c.properties.type === 'contraction' || c.properties.type.includes('transition'))) {
+            } else if (c.properties && (c.properties.type.includes('expansion') || c.properties.type.includes('contraction') || c.properties.type.includes('transition'))) {
                 const p = c.properties;
                 const dim1_d = p.d1 || p.d || 0, dim1_h = p.h1 || p.h || 0, dim1_w = p.w1 || p.w || 0;
                 const dim2_d = p.d2 || p.d || 0, dim2_h = p.h2 || p.h || 0, dim2_w = p.w2 || p.w || 0;
 
-                const A1 = p.inletShape === 'round' ? Math.PI * Math.pow(getInternalDim(dim1_d) / 2000, 2) : (getInternalDim(dim1_h) / 1000) * (getInternalDim(dim1_w) / 1000);
-                const A2 = p.outletShape === 'round' ? Math.PI * Math.pow(getInternalDim(dim2_d) / 2000, 2) : (getInternalDim(dim2_h) / 1000) * (getInternalDim(dim2_w) / 1000);
+                const shape1 = p.inletShape || (p.type.includes('rect') && !p.type.includes('transition') ? 'rect' : (p.type === 'transition_rect_round' ? 'rect' : 'round'));
+                const shape2 = p.outletShape || (p.type.includes('rect') && !p.type.includes('transition') ? 'rect' : (p.type === 'transition_round_rect' ? 'rect' : 'round'));
+
+                const A1 = shape1 === 'round' ? Math.PI * Math.pow(getInternalDim(dim1_d) / 2000, 2) : (getInternalDim(dim1_h) / 1000) * (getInternalDim(dim1_w) / 1000);
+                const A2 = shape2 === 'round' ? Math.PI * Math.pow(getInternalDim(dim2_d) / 2000, 2) : (getInternalDim(dim2_h) / 1000) * (getInternalDim(dim2_w) / 1000);
 
                 const d1_eq = Math.sqrt(4 * A1 / Math.PI);
                 const d2_eq = Math.sqrt(4 * A2 / Math.PI);
@@ -1650,7 +1668,7 @@ async function initializeApp() {
     const undoBtn = document.getElementById('undoButton');
     const redoBtn = document.getElementById('redoButton');
     if (undoBtn) undoBtn.addEventListener('click', handleUndo);
-    if (redoBtn) redoBtn.addEventListener('click', handleRedo);
+    if (redoBtn) undoBtn.addEventListener('click', handleRedo);
 
     ui.updateUndoRedoUI(canUndo(), canRedo());
 }
