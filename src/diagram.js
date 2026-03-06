@@ -101,19 +101,20 @@ export function renderDiagram(keepControls = false) {
     const container = document.getElementById('systemDiagramContainer');
     if (!container) return;
 
-    // LORTR / PIRAMIDESTUB GEOMETRI GENERATOR (Ray-Projection Lofting)
-    function createTransitionGeometry(shape1, w1, h1, r1, shape2, w2, h2, r2, length_3d, collar_3d) {
-        const segments = 64; // Høj opløsning eliminerer synlige knæk på runder
+    // --- LORTR / PIRAMIDESTUB GEOMETRI GENERATOR ---
+    // Ray-Projection Lofting forhindrer alt vridning og genererer perfekte flader
+    function createTransitionGeometry(shape1, w1, h1, r1, shape2, w2, h2, r2, length_3d) {
+        const segments = 64; 
         const positions = [];
         const indices = [];
         const uvs = [];
 
-        // Center-udstråling sikrer, at hjørner mapper perfekt uden "Twist"
+        // Hjælpefunktion til at skyde stråler (Ray-casting) fra centeret
         function getProfilePoint(shape, w, h, r, theta) {
             if (shape === 'round' || shape === 'circular') {
                 return { x: r * Math.cos(theta), z: r * Math.sin(theta) };
             } else {
-                // Firkant: Find skæringspunkt for vinklen mod en kasse
+                // Skæringspunkt på en firkant
                 const dx = Math.cos(theta);
                 const dz = Math.sin(theta);
                 const tx = Math.abs(dx) < 1e-6 ? Infinity : Math.abs((w / 2) / dx);
@@ -124,36 +125,31 @@ export function renderDiagram(keepControls = false) {
         }
 
         const halfL = length_3d / 2;
-        // Vi bygger 4 "Ringe": Indløb, Indløbs-krave, Udløbs-krave, Udløb
-        const rings = [
-            { y: -halfL,             shape: shape1, w: w1, h: h1, r: r1, v: 0 },
-            { y: -halfL + collar_3d, shape: shape1, w: w1, h: h1, r: r1, v: 0.2 },
-            { y: halfL - collar_3d,  shape: shape2, w: w2, h: h2, r: r2, v: 0.8 },
-            { y: halfL,              shape: shape2, w: w2, h: h2, r: r2, v: 1 }
-        ];
+        
+        // Vi genererer bund- og top-ringen
+        for (let i = 0; i <= segments; i++) {
+            const theta = (i / segments) * Math.PI * 2;
+            const p1 = getProfilePoint(shape1, w1, h1, r1, theta);
+            const p2 = getProfilePoint(shape2, w2, h2, r2, theta);
 
-        // Opbyg Vertices
-        rings.forEach((ring) => {
-            for (let i = 0; i <= segments; i++) {
-                const theta = (i / segments) * Math.PI * 2;
-                const pt = getProfilePoint(ring.shape, ring.w, ring.h, ring.r, theta);
-                positions.push(pt.x, ring.y, pt.z);
-                uvs.push(i / segments, ring.v);
-            }
-        });
+            // Ring 0 (Bund)
+            positions.push(p1.x, -halfL, p1.z);
+            uvs.push(i / segments, 0);
 
-        // Opbyg Flader (Triangulering)
-        const vertsPerRing = segments + 1;
-        for (let r = 0; r < 3; r++) { // 3 overgange mellem de 4 ringe
-            for (let i = 0; i < segments; i++) {
-                const a = r * vertsPerRing + i;
-                const b = r * vertsPerRing + i + 1;
-                const c = (r + 1) * vertsPerRing + i;
-                const d = (r + 1) * vertsPerRing + i + 1;
+            // Ring 1 (Top)
+            positions.push(p2.x, halfL, p2.z);
+            uvs.push(i / segments, 1);
+        }
 
-                indices.push(a, c, b);
-                indices.push(b, c, d);
-            }
+        // Byg trekanter med korrekt Winding Order (normals udad)
+        for (let i = 0; i < segments; i++) {
+            const a = i * 2;
+            const b = i * 2 + 1;
+            const c = (i + 1) * 2;
+            const d = (i + 1) * 2 + 1;
+
+            indices.push(a, b, c);
+            indices.push(b, d, c);
         }
 
         const geom = new THREE.BufferGeometry();
@@ -503,7 +499,7 @@ export function renderDiagram(keepControls = false) {
             moveDist = cornerDist * 2;
         }
         else if (pType.includes('transition') || pType.includes('expansion') || pType.includes('contraction')) {
-            // ALT DIMENSIONSÆNDRING (Lofting, Pyramidestub, Kegle)
+            // LORTR / SPIDSSTYKKE OVERGANG
             const dim1 = comp.state?.inletDimension;
             const dim2 = comp.state?.outletDimension?.outlet;
 
@@ -540,7 +536,7 @@ export function renderDiagram(keepControls = false) {
             w1 *= sf_3d; h1 *= sf_3d; r1 *= sf_3d;
             w2 *= sf_3d; h2 *= sf_3d; r2 *= sf_3d;
 
-            // Beregn L ud fra vinkel ("100mm + længde beregnet udfra vinkel")
+            // Beregn L = 100mm + beregnet længde ud fra vinkel
             const angleDeg = comp.properties?.angle || 30;
             const deltaMax = Math.max(Math.abs(w1 - w2) / 2, Math.abs(h1 - h2) / 2, Math.abs(r1 - r2));
             
@@ -549,12 +545,11 @@ export function renderDiagram(keepControls = false) {
                 l_calc_3d = deltaMax / Math.tan(THREE.MathUtils.degToRad(angleDeg / 2));
             }
             
-            // Total længde i pixels (100mm fast + beregnet længde)
+            // Total længde i pixels
             const total_length_mm = 100 + (l_calc_3d / sf_3d);
             moveDist = total_length_mm * sf_3d;
-            const collar_3d = 50 * sf_3d; // Vi bruger 50mm af de 100mm som krave i hver ende
 
-            const geometry = createTransitionGeometry(shape1, w1, h1, r1, shape2, w2, h2, r2, moveDist, collar_3d);
+            const geometry = createTransitionGeometry(shape1, w1, h1, r1, shape2, w2, h2, r2, moveDist);
             geometry.translate(0, moveDist / 2, 0);
             geometry.rotateX(Math.PI / 2);
 
@@ -709,7 +704,9 @@ export function renderDiagram(keepControls = false) {
         }
     }
 
-    if (systemTree.length > 0) {
+    // --- Fejlrettelsen: Vi bruger "tree" fra toppen af funktionen! ---
+    const tree = stateManager.getSystemTree();
+    if (tree && tree.length > 0) {
         const startPos = new THREE.Vector3(0, 0, 0);
         const startDir = new THREE.Vector3(1, 0, 0);
         const startUp = new THREE.Vector3(0, 1, 0);
@@ -719,8 +716,8 @@ export function renderDiagram(keepControls = false) {
         const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowStartPos, 60, 0x00E4FF, 15, 10);
         scene.add(arrowHelper);
 
-        const flow = Math.round(systemTree[0].state?.airflow_in || 0);
-        const tInRaw = systemTree[0].state?.temperature_in || 20;
+        const flow = Math.round(tree[0].state?.airflow_in || 0);
+        const tInRaw = tree[0].state?.temperature_in || 20;
         const temp = parseFloat(tInRaw);
         const startText = isExhaust ? 'Udsugning' : 'Indtag';
 
@@ -743,7 +740,7 @@ export function renderDiagram(keepControls = false) {
         const labelPos = isExhaust ? new THREE.Vector3(75, 0, 0) : new THREE.Vector3(-75, 0, 0);
         labelsMap.set(div, labelPos);
 
-        drawTree3D(systemTree[0], startPos, startDir, startUp);
+        drawTree3D(tree[0], startPos, startDir, startUp);
     }
 
     if (!keepControls) {
