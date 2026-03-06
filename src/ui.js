@@ -1904,20 +1904,10 @@ function validateTeeFlows(suffix, compId = null) {
             alert(`Fejl: Den samlede indtastede luftmængde (${formatLocalFloat(q1+q2, 1)} m³/h) stemmer ikke overens med den indkommende luftmængde (${formatLocalFloat(currentAirflow, 1)} m³/h).\n\nRet venligst fordelingen, eller slet indholdet i begge felter for automatisk 50/50 fordeling.`);
             return false;
         }
-    } else if (q1_val !== '' && q2_val === '') {
-        if (q1 > currentAirflow + 1.5) {
-            alert(`Fejl: Den indtastede luftmængde (${formatLocalFloat(q1, 1)} m³/h) overstiger den samlede indkommende luftmængde (${formatLocalFloat(currentAirflow, 1)} m³/h).`);
-            return false;
-        }
-        // Auto-udfyld den manglende del som en "Quality of Life" hjælp til brugeren
-        q2_el.value = formatLocalFloat(currentAirflow - q1, 1);
-    } else if (q1_val === '' && q2_val !== '') {
-        if (q2 > currentAirflow + 1.5) {
-            alert(`Fejl: Den indtastede luftmængde (${formatLocalFloat(q2, 1)} m³/h) overstiger den samlede indkommende luftmængde (${formatLocalFloat(currentAirflow, 1)} m³/h).`);
-            return false;
-        }
-        // Auto-udfyld den manglende del som en "Quality of Life" hjælp til brugeren
-        q1_el.value = formatLocalFloat(currentAirflow - q2, 1);
+    } else if (q1_val !== '' || q2_val !== '') {
+        // En af dem er udfyldt, men ikke den anden
+        alert(`Fejl: Du har kun indtastet luftmængde for den ene gren.\n\nIndtast venligst luftmængden for begge grene (som samlet skal give ${formatLocalFloat(currentAirflow, 1)} m³/h), eller slet indholdet i begge felter for automatisk 50/50 fordeling.`);
+        return false;
     }
 
     return true;
