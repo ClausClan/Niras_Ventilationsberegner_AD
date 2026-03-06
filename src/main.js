@@ -319,7 +319,7 @@ function handleFittingCalculation(event) {
                         angle = 2 * (Math.atan(radiusDiff / length) * (180 / Math.PI));
                     }
                     const A1 = Math.PI * (getInternalDim(d1) / 2000) ** 2, A2 = Math.PI * (getInternalDim(d2) / 2000) ** 2;
-                    const area_ratio = A2 / A1;
+                    const area_ratio = Math.min(A1, A2) / Math.max(A1, A2);
                     const zeta_table = isExpansion ? physics.EXPANSION_ZETA : physics.CONTRACTION_ZETA;
                     zeta = physics.interpolateValue(angle, area_ratio, zeta_table);
                     A = isExpansion ? A1 : A2;
@@ -346,7 +346,7 @@ function handleFittingCalculation(event) {
                     }
                     const A1 = (getInternalDim(h1) / 1000) * (getInternalDim(w1) / 1000);
                     const A2 = (getInternalDim(h2) / 1000) * (getInternalDim(w2) / 1000);
-                    const area_ratio = A2 / A1;
+                    const area_ratio = Math.min(A1, A2) / Math.max(A1, A2);
                     const zeta_table = isExpansion ? physics.RECT_EXPANSION_ZETA : physics.RECT_CONTRACTION_ZETA;
                     zeta = physics.interpolateValue(angle, area_ratio, zeta_table);
                     A = isExpansion ? A1 : A2;
@@ -364,7 +364,7 @@ function handleFittingCalculation(event) {
                     const A1 = (type === 'transition_round_rect') ? A_round : A_rect;
                     const A2 = (type === 'transition_round_rect') ? A_rect : A_round;
                     const isExpansion = A2 > A1;
-                    const area_ratio = A1 / A2;
+                    const area_ratio = Math.min(A1, A2) / Math.max(A1, A2);
                     let angle;
                     const geoType = document.querySelector('input[name="geo_type"]:checked').value;
                     if (geoType === 'angle') {
@@ -437,7 +437,7 @@ function createTransitionComponent(visualInlet, visualOutlet, airflow, globalFlo
     const A_flow_out = isExhaust ? A1_draw : A2_draw;
 
     const isPhysicalExpansion = A_flow_out > A_flow_in;
-    const area_ratio = isPhysicalExpansion ? (A_flow_in / A_flow_out) : (A_flow_out / A_flow_in);
+    const area_ratio = Math.min(A_flow_in, A_flow_out) / Math.max(A_flow_in, A_flow_out);
     const angle = 30; 
 
     let zeta_table;
@@ -831,7 +831,9 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
 
             const A_in = isExhaust ? A2_visual : A1_visual;
             const A_out = isExhaust ? A1_visual : A2_visual;
-            const area_ratio = A_out / A_in;
+            
+            // SIKKERHED: Sikrer at vi ikke crasher interpolateValue med > 1.0 værdier!
+            const area_ratio = Math.min(A_in, A_out) / Math.max(A_in, A_out);
 
             let zeta_table;
             if (p.type.includes('transition')) {
