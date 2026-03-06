@@ -102,19 +102,16 @@ export function renderDiagram(keepControls = false) {
     if (!container) return;
 
     // --- LORTR / PIRAMIDESTUB GEOMETRI GENERATOR ---
-    // Ray-Projection Lofting forhindrer alt vridning og genererer perfekte flader (inkl. flanger)
     function createTransitionGeometry(shape1, w1, h1, r1, shape2, w2, h2, r2, length_3d) {
         const segments = 64; 
         const positions = [];
         const indices = [];
         const uvs = [];
 
-        // Hjælpefunktion til at skyde stråler (Ray-casting) fra centeret
         function getProfilePoint(shape, w, h, r, theta) {
             if (shape === 'round' || shape === 'circular') {
                 return { x: r * Math.cos(theta), z: r * Math.sin(theta) };
             } else {
-                // Skæringspunkt på en firkant
                 const dx = Math.cos(theta);
                 const dz = Math.sin(theta);
                 const tx = Math.abs(dx) < 1e-6 ? Infinity : Math.abs((w / 2) / dx);
@@ -125,12 +122,9 @@ export function renderDiagram(keepControls = false) {
         }
 
         const halfL = length_3d / 2;
-        const collar_3d = 50 * (100 / 1000); // 50mm = 5 3D enheder til flanger
-        
-        // Sikkerhed for at kraven ikke overskygger en meget kort overgang
+        const collar_3d = 50 * (100 / 1000); 
         const effective_collar = Math.min(collar_3d, length_3d / 3);
         
-        // Vi bygger 4 "Ringe" for at tegne indløbskrave, svøb, og udløbskrave i ét
         const rings = [
             { y: -halfL,                    shape: shape1, w: w1, h: h1, r: r1, v: 0 },
             { y: -halfL + effective_collar, shape: shape1, w: w1, h: h1, r: r1, v: 0.2 },
@@ -138,7 +132,6 @@ export function renderDiagram(keepControls = false) {
             { y: halfL,                     shape: shape2, w: w2, h: h2, r: r2, v: 1 }
         ];
 
-        // Byg Vertices
         rings.forEach((ring) => {
             for (let i = 0; i <= segments; i++) {
                 const theta = (i / segments) * Math.PI * 2;
@@ -148,9 +141,8 @@ export function renderDiagram(keepControls = false) {
             }
         });
 
-        // Byg trekanter med korrekt Winding Order (normals udad)
         const vertsPerRing = segments + 1;
-        for (let r = 0; r < 3; r++) { // 3 zoner: Ind-krave, Overgang, Ud-krave
+        for (let r = 0; r < 3; r++) { 
             for (let i = 0; i < segments; i++) {
                 const a = r * vertsPerRing + i;
                 const b = r * vertsPerRing + i + 1;
@@ -171,7 +163,6 @@ export function renderDiagram(keepControls = false) {
         return geom;
     }
 
-    // Use full state to check systemType
     const fullState = window.stateManager ? window.stateManager.state : { systemComponents: [] };
     const components = fullState.systemComponents || getSystemComponents();
     const isExhaust = fullState.systemType === 'merging';
@@ -181,7 +172,6 @@ export function renderDiagram(keepControls = false) {
         return;
     }
 
-    // --- 1. Init Three.js Environment ---
     let webglContainer = document.getElementById('diagramWebglContainer');
 
     if (!webglContainer || !renderer) {
@@ -247,7 +237,6 @@ export function renderDiagram(keepControls = false) {
         });
     }
 
-    // --- 2. Clear Scene & Data ---
     for (let i = scene.children.length - 1; i >= 0; i--) {
         let obj = scene.children[i];
         if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "ArrowHelper") {
@@ -369,7 +358,7 @@ export function renderDiagram(keepControls = false) {
                 opacity: isGhosted ? 0.5 : 1.0,
                 roughness: 0.3,
                 metalness: 0.1,
-                side: THREE.DoubleSide // Ekstra sikkerhed for LORTR lofting
+                side: THREE.DoubleSide
             };
 
             if (useGradient) {
@@ -411,7 +400,7 @@ export function renderDiagram(keepControls = false) {
         let widthMm = 200;
         let heightMm = 200;
 
-        const dim = comp.state?.inletDimension || comp.state?.outletDimension?.outlet || comp.state?.outletDimension?.straight;
+        const dim = comp.state?.inletDimension || comp.state?.outletDimension?.outlet || comp.state?.outletDimension?.straight || comp.state?.outletDimension?.outlet_path1;
         if (dim) {
             if (dim.shape === 'rectangular' || dim.shape === 'rect') {
                 isRect = true;
@@ -509,7 +498,6 @@ export function renderDiagram(keepControls = false) {
             moveDist = cornerDist * 2;
         }
         else if (pType.includes('transition') || pType.includes('expansion') || pType.includes('contraction')) {
-            // --- LORTR / SPIDSSTYKKE OVERGANG (Skudsikker Dimensionsaflæsning) ---
             const dim1 = comp.state?.inletDimension;
             const dim2 = comp.state?.outletDimension?.outlet;
             const p = comp.properties || {};
@@ -519,7 +507,6 @@ export function renderDiagram(keepControls = false) {
             else if (pType === 'transition_round_rect') { shape1 = 'round'; shape2 = 'rect'; }
             else if (pType.includes('rect')) { shape1 = 'rect'; shape2 = 'rect'; }
 
-            // Override if explicitly set on comp (Auto transitions)
             if (comp.shape === 'rectangular' || comp.shape === 'rect') shape1 = 'rect';
             else if (comp.shape === 'circular' || comp.shape === 'round') shape1 = 'round';
             
@@ -529,7 +516,6 @@ export function renderDiagram(keepControls = false) {
             let w1 = 200, h1 = 200, r1 = 100;
             let w2 = 200, h2 = 200, r2 = 100;
 
-            // Indløb Dimensioner
             if (shape1 === 'rect') {
                 w1 = parseFloat(comp.width || p.w1 || (pType === 'transition_rect_round' ? p.w : null) || dim1?.w || dim1?.sideB || 200);
                 h1 = parseFloat(comp.height || p.h1 || (pType === 'transition_rect_round' ? p.h : null) || dim1?.h || dim1?.sideA || 200);
@@ -540,7 +526,6 @@ export function renderDiagram(keepControls = false) {
                 w1 = d1; h1 = d1;
             }
 
-            // Udløb Dimensioner
             if (shape2 === 'rect') {
                 w2 = parseFloat(comp.widthOut || p.w2 || (pType === 'transition_round_rect' ? p.w : null) || dim2?.w || dim2?.sideB || 200);
                 h2 = parseFloat(comp.heightOut || p.h2 || (pType === 'transition_round_rect' ? p.h : null) || dim2?.h || dim2?.sideA || 200);
@@ -551,12 +536,10 @@ export function renderDiagram(keepControls = false) {
                 w2 = d2; h2 = d2;
             }
 
-            // Skalering til 3D space
             const sf_3d = PIXELS_PER_METER / 1000;
             w1 *= sf_3d; h1 *= sf_3d; r1 *= sf_3d;
             w2 *= sf_3d; h2 *= sf_3d; r2 *= sf_3d;
 
-            // Beregn L = 100mm + beregnet længde ud fra vinkel (Som bedt om!)
             const angleDeg = parseFloat(p.angle || 30);
             const deltaMax = Math.max(Math.abs(w1 - w2) / 2, Math.abs(h1 - h2) / 2, Math.abs(r1 - r2));
             
@@ -565,7 +548,6 @@ export function renderDiagram(keepControls = false) {
                 l_calc_3d = deltaMax / Math.tan(THREE.MathUtils.degToRad(angleDeg / 2));
             }
             
-            // Total længde (100mm + udregnet vinkelsmig)
             const total_length_mm = 100 + (l_calc_3d / sf_3d);
             moveDist = total_length_mm * sf_3d;
 
@@ -582,6 +564,8 @@ export function renderDiagram(keepControls = false) {
             midWay.copy(currentPos).add(currentDir.clone().multiplyScalar(moveDist / 2));
         }
         else if (pType.includes('tee')) {
+            const isBullhead = pType === 'tee_bullhead';
+            
             const orientation = comp.properties?.orientation || 'Left';
             const rightDir = currentDir.clone().cross(nextUp).normalize();
             let axis = nextUp.clone();
@@ -593,47 +577,148 @@ export function renderDiagram(keepControls = false) {
             else if (orientation === 'Down') { axis = rightDir.clone(); turnSign = -1; }
 
             const branchTurn = THREE.MathUtils.degToRad(90);
-            branchDir = currentDir.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
-            branchUp = nextUp.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
 
-            moveDist = Math.max(radius3D * 4, width3D * 2, 60);
-            const stubLen = moveDist / 2;
-            const branchRadius = ((comp.properties?.d_branch || diameterMm) / 1000) * PIXELS_PER_METER / 2;
-            const branchWidth = ((comp.properties?.w_branch || widthMm) / 1000) * PIXELS_PER_METER;
-            const branchHeight = ((comp.properties?.h_branch || heightMm) / 1000) * PIXELS_PER_METER;
-            const isBranchRect = comp.properties?.w_branch !== undefined || (isRect && comp.properties?.d_branch === undefined);
+            if (isBullhead) {
+                // --- BULLHEAD TEGNELOGIK ---
+                // For en bullhead går luften ind i midten og spreder sig 90 grader til hver side.
+                const dIn = (comp.properties?.d_in || diameterMm) / 1000 * PIXELS_PER_METER;
+                const dOut1 = (comp.properties?.d_out1 || diameterMm) / 1000 * PIXELS_PER_METER;
+                const dOut2 = (comp.properties?.d_out2 || diameterMm) / 1000 * PIXELS_PER_METER;
 
-            // Main stub
-            let gS;
-            if (isRect) {
-                gS = new THREE.BoxGeometry(width3D, moveDist, height3D);
+                moveDist = Math.max(dIn * 2, 60);
+                const stubLen = moveDist / 2;
+
+                // Indløbs-stub
+                let gIn = new THREE.CylinderGeometry(dIn/2, dIn/2, stubLen, 32);
+                gIn.translate(0, stubLen/2, 0);
+                gIn.rotateX(Math.PI/2);
+                const meshIn = new THREE.Mesh(gIn, material);
+                meshIn.position.copy(currentPos);
+                meshIn.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
+                scene.add(meshIn);
+
+                const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
+
+                // Path 1 (F.eks. Venstre)
+                const path1Dir = currentDir.clone().applyAxisAngle(axis, branchTurn).normalize();
+                const path1Up = nextUp.clone().applyAxisAngle(axis, branchTurn).normalize();
+                
+                // Path 2 (F.eks. Højre)
+                const path2Dir = currentDir.clone().applyAxisAngle(axis, -branchTurn).normalize();
+                const path2Up = nextUp.clone().applyAxisAngle(axis, -branchTurn).normalize();
+
+                // Branch 1 Stub
+                let gB1 = new THREE.CylinderGeometry(dOut1/2, dOut1/2, stubLen, 32);
+                gB1.translate(0, stubLen/2, 0);
+                gB1.rotateX(Math.PI/2);
+                const meshB1 = new THREE.Mesh(gB1, material);
+                meshB1.position.copy(midPos);
+                meshB1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path1Dir);
+                scene.add(meshB1);
+
+                // Branch 2 Stub
+                let gB2 = new THREE.CylinderGeometry(dOut2/2, dOut2/2, stubLen, 32);
+                gB2.translate(0, stubLen/2, 0);
+                gB2.rotateX(Math.PI/2);
+                const meshB2 = new THREE.Mesh(gB2, material);
+                meshB2.position.copy(midPos);
+                meshB2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path2Dir);
+                scene.add(meshB2);
+
+                midWay.copy(midPos);
+
+                const drawOpenEnd = (pos, dir, portName) => {
+                    const arrowLength = 50;
+                    const arrowDir = isExhaust ? dir.clone().negate() : dir;
+                    const arrowPos = isExhaust ? pos.clone().add(dir.clone().multiplyScalar(arrowLength)) : pos;
+
+                    const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowPos, arrowLength, 0x00E4FF, 15, 10);
+                    scene.add(arrowHelper);
+
+                    const outFlow = comp.state?.airflow_out?.[portName] || 0;
+                    const flow = Math.round(outFlow);
+                    
+                    const tOutRaw = comp.state?.temperature_out?.[portName] || comp.state?.temperature_in || 20;
+                    const temp = parseFloat(tOutRaw);
+                    const endText = isExhaust ? 'Udsugning' : 'Indblæsning';
+
+                    const div = document.createElement('div');
+                    div.className = 'diagram-label end-label';
+                    div.style.position = 'absolute';
+                    div.style.color = '#00E4FF';
+                    div.style.fontWeight = 'bold';
+                    div.style.background = 'rgba(0,0,0,0.6)';
+                    div.style.padding = '2px 6px';
+                    div.style.borderRadius = '4px';
+                    div.style.border = '1px solid #00E4FF';
+                    div.style.fontSize = '11px';
+                    div.style.pointerEvents = 'none';
+                    div.style.whiteSpace = 'pre';
+                    div.style.textAlign = 'center';
+                    div.innerText = `${endText}\n${flow} m³/h\n${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`;
+                    labelsContainer.appendChild(div);
+                    labelsMap.set(div, pos.clone().add(dir.clone().multiplyScalar(arrowLength + 15)));
+                };
+
+                // Tegn Børn på Gren 1
+                const end1Pos = midPos.clone().add(path1Dir.clone().multiplyScalar(stubLen));
+                const c1 = comp.children && comp.children.outlet_path1 && comp.children.outlet_path1[0];
+                if (c1) drawTree3D(c1, end1Pos, path1Dir, path1Up);
+                else drawOpenEnd(end1Pos, path1Dir, 'outlet_path1');
+
+                // Tegn Børn på Gren 2
+                const end2Pos = midPos.clone().add(path2Dir.clone().multiplyScalar(stubLen));
+                const c2 = comp.children && comp.children.outlet_path2 && comp.children.outlet_path2[0];
+                if (c2) drawTree3D(c2, end2Pos, path2Dir, path2Up);
+                else drawOpenEnd(end2Pos, path2Dir, 'outlet_path2');
+
+                // Returner tidligt fordi bullhead klarer sit eget recursive kald
+                drawLabels(comp, midWay, isIncluded);
+                bMin.min(currentPos); bMin.min(end1Pos); bMin.min(end2Pos);
+                bMax.max(currentPos); bMax.max(end1Pos); bMax.max(end2Pos);
+                return;
             } else {
-                gS = new THREE.CylinderGeometry(radius3D, radius3D, moveDist, 32);
-            }
-            gS.translate(0, moveDist / 2, 0);
-            gS.rotateX(Math.PI / 2);
-            const meshS = new THREE.Mesh(gS, material);
-            meshS.position.copy(currentPos);
-            meshS.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
-            scene.add(meshS);
+                // --- STANDARD T-STYKKE (Ligeud + 1 Afgrening) ---
+                branchDir = currentDir.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
+                branchUp = nextUp.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
 
-            // Branch stub
-            const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
-            let gB;
-            if (isBranchRect) {
-                gB = new THREE.BoxGeometry(branchWidth, stubLen, branchHeight);
-            } else {
-                gB = new THREE.CylinderGeometry(branchRadius, branchRadius, stubLen, 32);
-            }
-            gB.translate(0, stubLen / 2, 0);
-            gB.rotateX(Math.PI / 2);
-            const meshB = new THREE.Mesh(gB, material);
-            meshB.position.copy(midPos);
-            meshB.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), branchDir);
-            scene.add(meshB);
+                moveDist = Math.max(radius3D * 4, width3D * 2, 60);
+                const stubLen = moveDist / 2;
+                const branchRadius = ((comp.properties?.d_branch || diameterMm) / 1000) * PIXELS_PER_METER / 2;
+                const branchWidth = ((comp.properties?.w_branch || widthMm) / 1000) * PIXELS_PER_METER;
+                const branchHeight = ((comp.properties?.h_branch || heightMm) / 1000) * PIXELS_PER_METER;
+                const isBranchRect = comp.properties?.w_branch !== undefined || (isRect && comp.properties?.d_branch === undefined);
 
-            nextPos.add(currentDir.clone().multiplyScalar(moveDist));
-            midWay.copy(midPos);
+                let gS;
+                if (isRect) {
+                    gS = new THREE.BoxGeometry(width3D, moveDist, height3D);
+                } else {
+                    gS = new THREE.CylinderGeometry(radius3D, radius3D, moveDist, 32);
+                }
+                gS.translate(0, moveDist / 2, 0);
+                gS.rotateX(Math.PI / 2);
+                const meshS = new THREE.Mesh(gS, material);
+                meshS.position.copy(currentPos);
+                meshS.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
+                scene.add(meshS);
+
+                const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
+                let gB;
+                if (isBranchRect) {
+                    gB = new THREE.BoxGeometry(branchWidth, stubLen, branchHeight);
+                } else {
+                    gB = new THREE.CylinderGeometry(branchRadius, branchRadius, stubLen, 32);
+                }
+                gB.translate(0, stubLen / 2, 0);
+                gB.rotateX(Math.PI / 2);
+                const meshB = new THREE.Mesh(gB, material);
+                meshB.position.copy(midPos);
+                meshB.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), branchDir);
+                scene.add(meshB);
+
+                nextPos.add(currentDir.clone().multiplyScalar(moveDist));
+                midWay.copy(midPos);
+            }
         }
         else {
             moveDist = Math.max(radius3D * 2, 40);
@@ -648,79 +733,98 @@ export function renderDiagram(keepControls = false) {
             midWay.copy(currentPos).add(currentDir.clone().multiplyScalar(moveDist / 2));
         }
 
-        // --- Positions & Labels ---
-        if (diagramSettings.labelMode !== 'none') {
-            let txt = comp.name.split(' ')[0];
-            if (diagramSettings.labelMode === 'detailed') {
-                const press = Math.round(comp.state?.pressureLoss || 0);
-                const vel = (comp.state?.velocity || 0).toFixed(1);
-                const flow = Math.round(comp.state?.airflow_in || 0);
-                txt += ` (${flow}m³/h, ${vel}m/s, ${press}Pa)`;
-            }
-            if (!isIncluded) txt += " (Deaktiveret)";
+        // --- Positions & Labels Funktion ---
+        function drawLabels(compData, labelPosCenter, isIncl) {
+            if (diagramSettings.labelMode !== 'none') {
+                let txt = compData.name.split(' ')[0];
+                if (diagramSettings.labelMode === 'detailed') {
+                    const press = Math.round(compData.state?.pressureLoss || 0);
+                    const vel = (compData.state?.velocity || 0).toFixed(1);
+                    const flow = Math.round(compData.state?.airflow_in || 0);
+                    txt += ` (${flow}m³/h, ${vel}m/s, ${press}Pa)`;
+                }
+                if (!isIncl) txt += " (Deaktiveret)";
 
-            const div = document.createElement('div');
-            div.className = 'diagram-label';
-            div.style.position = 'absolute';
-            div.style.color = '#fff';
-            div.style.textShadow = '0 0 3px #000';
-            div.style.fontSize = '11px';
-            div.style.pointerEvents = 'none';
-            div.innerText = txt;
-            labelsContainer.appendChild(div);
-            labelsMap.set(div, midWay);
+                const div = document.createElement('div');
+                div.className = 'diagram-label';
+                div.style.position = 'absolute';
+                div.style.color = '#fff';
+                div.style.textShadow = '0 0 3px #000';
+                div.style.fontSize = '11px';
+                div.style.pointerEvents = 'none';
+                div.innerText = txt;
+                labelsContainer.appendChild(div);
+                labelsMap.set(div, labelPosCenter);
+            }
         }
 
-        bMin.min(currentPos); bMin.min(nextPos);
-        bMax.max(currentPos); bMax.max(nextPos);
+        // Tegn standard labels for alle komponenter udover Bullhead (som håndteres oppe i sin egen if-blok)
+        if (pType !== 'tee_bullhead') {
+            drawLabels(comp, midWay, isIncluded);
+            bMin.min(currentPos); bMin.min(nextPos);
+            bMax.max(currentPos); bMax.max(nextPos);
 
-        const drawOpenEnd = (pos, dir) => {
-            const arrowLength = 50;
-            const arrowDir = isExhaust ? dir.clone().negate() : dir;
-            const arrowPos = isExhaust ? pos.clone().add(dir.clone().multiplyScalar(arrowLength)) : pos;
+            const drawOpenEnd = (pos, dir, portName = null) => {
+                const arrowLength = 50;
+                const arrowDir = isExhaust ? dir.clone().negate() : dir;
+                const arrowPos = isExhaust ? pos.clone().add(dir.clone().multiplyScalar(arrowLength)) : pos;
 
-            const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowPos, arrowLength, 0x00E4FF, 15, 10);
-            scene.add(arrowHelper);
+                const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowPos, arrowLength, 0x00E4FF, 15, 10);
+                scene.add(arrowHelper);
 
-            const outFlow = comp.state?.airflow_out?.outlet || comp.state?.airflow_out?.outlet_straight || comp.state?.airflow_out?.outlet_branch || comp.state?.airflow_in || 0;
-            const flow = Math.round(outFlow);
-            const tOutRaw = comp.state?.temperature_out?.outlet || comp.state?.temperature_out?.outlet_straight || comp.state?.temperature_in || 20;
-            const temp = parseFloat(tOutRaw);
-            const endText = isExhaust ? 'Udsugning' : 'Indblæsning';
+                let outFlow = 0;
+                if (portName && comp.state?.airflow_out) {
+                    outFlow = comp.state.airflow_out[portName];
+                } else {
+                    outFlow = comp.state?.airflow_out?.outlet || comp.state?.airflow_out?.outlet_straight || comp.state?.airflow_out?.outlet_branch || comp.state?.airflow_in || 0;
+                }
 
-            const div = document.createElement('div');
-            div.className = 'diagram-label end-label';
-            div.style.position = 'absolute';
-            div.style.color = '#00E4FF';
-            div.style.fontWeight = 'bold';
-            div.style.background = 'rgba(0,0,0,0.6)';
-            div.style.padding = '2px 6px';
-            div.style.borderRadius = '4px';
-            div.style.border = '1px solid #00E4FF';
-            div.style.fontSize = '11px';
-            div.style.pointerEvents = 'none';
-            div.style.whiteSpace = 'pre';
-            div.style.textAlign = 'center';
-            div.innerText = `${endText}\n${flow} m³/h\n${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`;
-            labelsContainer.appendChild(div);
-            labelsMap.set(div, pos.clone().add(dir.clone().multiplyScalar(arrowLength + 15)));
-        };
+                const flow = Math.round(outFlow);
 
-        if (pType.includes('tee')) {
-            const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(moveDist / 2));
-            const branchStart = midPos.clone().add(branchDir.clone().multiplyScalar(moveDist / 2));
+                let tOutRaw = 20;
+                if (portName && comp.state?.temperature_out) {
+                    tOutRaw = comp.state.temperature_out[portName];
+                } else {
+                    tOutRaw = comp.state?.temperature_out?.outlet || comp.state?.temperature_out?.outlet_straight || comp.state?.temperature_in || 20;
+                }
+                const temp = parseFloat(tOutRaw);
 
-            const sc = comp.children && ((comp.children.outlet_straight && comp.children.outlet_straight[0]) || (comp.children.outlet_path1 && comp.children.outlet_path1[0]));
-            if (sc) drawTree3D(sc, nextPos, nextDir, nextUp);
-            else drawOpenEnd(nextPos, nextDir);
+                const endText = isExhaust ? 'Udsugning' : 'Indblæsning';
 
-            const bc = comp.children && ((comp.children.outlet_branch && comp.children.outlet_branch[0]) || (comp.children.outlet_path2 && comp.children.outlet_path2[0]));
-            if (bc) drawTree3D(bc, branchStart, branchDir, branchUp);
-            else drawOpenEnd(branchStart, branchDir);
-        } else {
-            const c = comp.children && comp.children.outlet && comp.children.outlet[0];
-            if (c) drawTree3D(c, nextPos, nextDir, nextUp);
-            else drawOpenEnd(nextPos, nextDir);
+                const div = document.createElement('div');
+                div.className = 'diagram-label end-label';
+                div.style.position = 'absolute';
+                div.style.color = '#00E4FF';
+                div.style.fontWeight = 'bold';
+                div.style.background = 'rgba(0,0,0,0.6)';
+                div.style.padding = '2px 6px';
+                div.style.borderRadius = '4px';
+                div.style.border = '1px solid #00E4FF';
+                div.style.fontSize = '11px';
+                div.style.pointerEvents = 'none';
+                div.style.whiteSpace = 'pre';
+                div.style.textAlign = 'center';
+                div.innerText = `${endText}\n${flow} m³/h\n${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`;
+                labelsContainer.appendChild(div);
+                labelsMap.set(div, pos.clone().add(dir.clone().multiplyScalar(arrowLength + 15)));
+            };
+
+            if (pType.includes('tee')) {
+                const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(moveDist / 2));
+                const branchStart = midPos.clone().add(branchDir.clone().multiplyScalar(moveDist / 2));
+
+                const sc = comp.children && comp.children.outlet_straight && comp.children.outlet_straight[0];
+                if (sc) drawTree3D(sc, nextPos, nextDir, nextUp);
+                else drawOpenEnd(nextPos, nextDir, 'outlet_straight');
+
+                const bc = comp.children && comp.children.outlet_branch && comp.children.outlet_branch[0];
+                if (bc) drawTree3D(bc, branchStart, branchDir, branchUp);
+                else drawOpenEnd(branchStart, branchDir, 'outlet_branch');
+            } else {
+                const c = comp.children && comp.children.outlet && comp.children.outlet[0];
+                if (c) drawTree3D(c, nextPos, nextDir, nextUp);
+                else drawOpenEnd(nextPos, nextDir);
+            }
         }
     }
 

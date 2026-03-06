@@ -231,7 +231,7 @@ export function renderSystem() {
         let bestChildPath = [];
 
         if (isTee) {
-            const ports = ['outlet_straight', 'outlet_branch'];
+            const ports = ['outlet_straight', 'outlet_branch', 'outlet_path1', 'outlet_path2'];
             ports.forEach(port => {
                 let portLoss = (node.state && node.state.portPressureLoss && node.state.portPressureLoss[port] !== undefined) ? node.state.portPressureLoss[port] : 0;
                 
@@ -300,18 +300,23 @@ export function renderSystem() {
 
         if (pType.startsWith('tee_')) {
             const props = c.properties || {};
-
             let q_in = airflowDisp;
-            let q_s = state.airflow_out ? state.airflow_out['outlet_straight'] : props.q_straight;
-            let q_b = state.airflow_out ? state.airflow_out['outlet_branch'] : props.q_branch;
-
-            let loss_s = state.portPressureLoss ? state.portPressureLoss['outlet_straight'] : 0;
-            let loss_b = state.portPressureLoss ? state.portPressureLoss['outlet_branch'] : 0;
+            let q_s, q_b, loss_s, loss_b;
 
             if (pType === 'tee_bullhead') {
+                q_s = state.airflow_out ? state.airflow_out['outlet_path1'] : props.q_out1;
+                q_b = state.airflow_out ? state.airflow_out['outlet_path2'] : props.q_out2;
+                loss_s = state.portPressureLoss ? state.portPressureLoss['outlet_path1'] : 0;
+                loss_b = state.portPressureLoss ? state.portPressureLoss['outlet_path2'] : 0;
+                
                 airflowText = `Ind: ${formatLocalFloat(q_in, 0)}<br>G1: ${formatLocalFloat(q_s || 0, 0)} | G2: ${formatLocalFloat(q_b || 0, 0)}`;
                 pressureText = `G1: ${formatLocalFloat(loss_s, 2)} Pa<br>G2: ${formatLocalFloat(loss_b, 2)} Pa`;
             } else {
+                q_s = state.airflow_out ? state.airflow_out['outlet_straight'] : props.q_straight;
+                q_b = state.airflow_out ? state.airflow_out['outlet_branch'] : props.q_branch;
+                loss_s = state.portPressureLoss ? state.portPressureLoss['outlet_straight'] : 0;
+                loss_b = state.portPressureLoss ? state.portPressureLoss['outlet_branch'] : 0;
+
                 airflowText = `Ind: ${formatLocalFloat(q_in, 0)}<br>L: ${formatLocalFloat(q_s || 0, 0)} | A: ${formatLocalFloat(q_b || 0, 0)}`;
                 pressureText = `Ligeud: ${formatLocalFloat(loss_s, 2)} Pa<br>Afgr: ${formatLocalFloat(loss_b, 2)} Pa`;
             }
@@ -328,15 +333,21 @@ export function renderSystem() {
             warningHtml += ` <button class="details-btn" style="font-size: 0.8rem; padding: 2px 4px;" onclick="window.requestCorrection('${c.id}')">[+Pa]</button>`;
         }
 
-        // --- Korrigeret og Fejlsikret Temperatur Visning ---
+        // --- SKUDSIKKER TEMPERATUR FORMATERING ---
         let tempText = '-';
-        let t_out_node = state.temperature_out ? (state.temperature_out['outlet'] !== undefined ? state.temperature_out['outlet'] : state.temperature_out['outlet_straight']) : undefined;
-        
-        if (state.temperature_in !== undefined && t_out_node !== undefined && !isNaN(state.temperature_in) && !isNaN(t_out_node)) {
-            if (Math.abs(Number(state.temperature_in) - Number(t_out_node)) > 0.05) {
-                tempText = `${formatLocalFloat(Number(state.temperature_in), 1)} → ${formatLocalFloat(Number(t_out_node), 1)} °C`;
+        const t_in_val = parseFloat(state.temperature_in);
+        let t_out_raw = state.temperature_out ? 
+            (state.temperature_out['outlet'] !== undefined ? state.temperature_out['outlet'] : 
+             (state.temperature_out['outlet_straight'] !== undefined ? state.temperature_out['outlet_straight'] : 
+              state.temperature_out['outlet_path1'])) 
+            : undefined;
+        const t_out_val = parseFloat(t_out_raw);
+
+        if (!isNaN(t_in_val) && !isNaN(t_out_val)) {
+            if (Math.abs(t_in_val - t_out_val) > 0.05) {
+                tempText = `${formatLocalFloat(t_in_val, 1)} → ${formatLocalFloat(t_out_val, 1)} °C`;
             } else {
-                tempText = `${formatLocalFloat(Number(state.temperature_in), 1)} °C`;
+                tempText = `${formatLocalFloat(t_in_val, 1)} °C`;
             }
         }
 
@@ -375,18 +386,21 @@ export function renderSystem() {
 
         let expectedPorts = ['outlet'];
         if (pType.startsWith('tee_')) {
-            expectedPorts = ['outlet_straight', 'outlet_branch'];
+            if (pType === 'tee_bullhead') {
+                expectedPorts = ['outlet_path1', 'outlet_path2'];
+            } else {
+                expectedPorts = ['outlet_straight', 'outlet_branch'];
+            }
         }
 
         expectedPorts.forEach(portName => {
             let childLabel = '';
             let childDepth = depth;
             if (portName === 'outlet_branch' || portName === 'outlet_straight') {
-                if (pType === 'tee_bullhead') {
-                    childLabel = portName === 'outlet_straight' ? 'Gren 1' : 'Gren 2';
-                } else {
-                    childLabel = portName === 'outlet_straight' ? 'Ligeud' : 'Afgrening';
-                }
+                childLabel = portName === 'outlet_branch' ? 'Afgrening' : 'Ligeud';
+                childDepth = depth + 1;
+            } else if (portName === 'outlet_path1' || portName === 'outlet_path2') {
+                childLabel = portName === 'outlet_path2' ? 'Gren 2' : 'Gren 1';
                 childDepth = depth + 1;
             }
 
@@ -398,8 +412,10 @@ export function renderSystem() {
                 });
             } else {
                 let addLabel = "Tilføj videre";
-                if (portName === 'outlet_straight') addLabel = pType === 'tee_bullhead' ? "Tilføj til Gren 1" : "Tilføj Ligeud";
-                if (portName === 'outlet_branch') addLabel = pType === 'tee_bullhead' ? "Tilføj til Gren 2" : "Tilføj til Afgrening";
+                if (portName === 'outlet_branch') addLabel = "Tilføj til Afgrening";
+                if (portName === 'outlet_straight') addLabel = "Tilføj Ligeud";
+                if (portName === 'outlet_path1') addLabel = "Tilføj til Gren 1";
+                if (portName === 'outlet_path2') addLabel = "Tilføj til Gren 2";
 
                 rowHtml += `
                     <tr class="add-node-row">
@@ -503,23 +519,29 @@ export function showSystemComponentDetails(id) {
     modalTitle.innerText = `Detaljer for ${component.name}`;
     let bodyHtml = '';
 
-    // --- Korrigeret og Fejlsikret Termodynamik Visning ---
-    const t_in = state.temperature_in !== undefined ? Number(state.temperature_in) : undefined;
-    let t_out_val = state.temperature_out ? (state.temperature_out['outlet'] !== undefined ? state.temperature_out['outlet'] : state.temperature_out['outlet_straight']) : undefined;
+    // --- SKUDSIKKER TERMODYNAMIK VISNING ---
+    const t_in_val = parseFloat(state.temperature_in);
+    let t_out_raw = state.temperature_out ? 
+        (state.temperature_out['outlet'] !== undefined ? state.temperature_out['outlet'] : 
+         (state.temperature_out['outlet_straight'] !== undefined ? state.temperature_out['outlet_straight'] : 
+          state.temperature_out['outlet_path1'])) 
+        : undefined;
+    const t_out_val = parseFloat(t_out_raw);
 
     let thermoHtml = '';
-    if (t_in !== undefined && !isNaN(t_in)) {
+    if (!isNaN(t_in_val)) {
         thermoHtml = `<hr><p><strong>Termodynamik</strong></p>
-            <p><strong>Temperatur ind:</strong> ${formatLocalFloat(t_in, 1)} °C</p>`;
+            <p><strong>Temperatur ind:</strong> ${formatLocalFloat(t_in_val, 1)} °C</p>`;
         
-        if (t_out_val !== undefined && !isNaN(Number(t_out_val))) {
-             thermoHtml += `<p><strong>Temperatur ud:</strong> ${formatLocalFloat(Number(t_out_val), 1)} °C</p>`;
+        if (!isNaN(t_out_val)) {
+             thermoHtml += `<p><strong>Temperatur ud:</strong> ${formatLocalFloat(t_out_val, 1)} °C</p>`;
         } else {
              thermoHtml += `<p><strong>Temperatur ud:</strong> - </p>`;
         }
 
-        if (state.heatLoss !== undefined && state.heatLoss !== 0 && !isNaN(Number(state.heatLoss))) {
-            thermoHtml += `<p><strong>Varmetab til omgivelser:</strong> ${formatLocalFloat(Number(state.heatLoss), 0)} W</p>`;
+        const hLoss = parseFloat(state.heatLoss);
+        if (!isNaN(hLoss) && hLoss !== 0) {
+            thermoHtml += `<p><strong>Varmetab til omgivelser:</strong> ${formatLocalFloat(hLoss, 0)} W</p>`;
         }
     }
 
@@ -536,25 +558,31 @@ export function showSystemComponentDetails(id) {
             <p><strong>Tryktab pr. meter (dp) =</strong> (λ / Dₕ) * (ρ/2) * v² = <strong>${formatLocalFloat(dpPerMeter, 2)} Pa/m</strong></p>
             <p><strong>Samlet Tryktab =</strong> dp * Længde = ${formatLocalFloat(dpPerMeter, 2)} * ${formatLocalFloat(component.properties.length || 1, 2)} = <strong>${formatLocalFloat(state.pressureLoss, 2)} Pa</strong></p>${thermoHtml}`;
 
-    } else if (pType.includes('tee')) {
-        const title = pType === 'tee_bullhead' ? 'T-stykke (Dobbelt Afgrening)' : (data.type === 'tee_merge' ? `T-stykke (Samle)` : `T-stykke (Dele)`);
+    } else if (pType.includes('tee') || (data.type && data.type.includes('tee'))) {
+        const isBullhead = pType === 'tee_bullhead';
+        const title = isBullhead ? 'T-stykke (Dobbelt Afgrening)' : (data.type === 'tee_merge' ? `T-stykke (Samle)` : `T-stykke (Dele)`);
         
         let s_html = '';
         let b_html = '';
         
-        if (state.calculationDetails && state.calculationDetails.straight && state.calculationDetails.branch) {
-            const sd = state.calculationDetails.straight;
-            const bd = state.calculationDetails.branch;
+        const key1 = isBullhead ? 'path1' : 'straight';
+        const key2 = isBullhead ? 'path2' : 'branch';
+        const port1 = isBullhead ? 'outlet_path1' : 'outlet_straight';
+        const port2 = isBullhead ? 'outlet_path2' : 'outlet_branch';
+        
+        if (state.calculationDetails && state.calculationDetails[key1] && state.calculationDetails[key2]) {
+            const sd = state.calculationDetails[key1];
+            const bd = state.calculationDetails[key2];
             
             s_html = `
-            <p><strong>Ligeud / Gren 1:</strong></p>
+            <p><strong>${isBullhead ? 'Gren 1' : 'Ligeud'}:</strong></p>
             <p>Hastighed: ${formatLocalFloat(sd.v_ms || 0, 2)} m/s, Zeta: ${formatLocalFloat(sd.zeta || 0, 3)}, Pₐᵧₙ: ${formatLocalFloat(sd.Pdyn_Pa || 0, 2)} Pa</p>
-            <p>Tryktab (Δp): <strong>${formatLocalFloat(state.portPressureLoss ? state.portPressureLoss.outlet_straight : 0, 2)} Pa</strong></p>`;
+            <p>Tryktab (Δp): <strong>${formatLocalFloat(state.portPressureLoss ? state.portPressureLoss[port1] : 0, 2)} Pa</strong></p>`;
             
             b_html = `
-            <hr><p><strong>Afgrening / Gren 2:</strong></p>
+            <hr><p><strong>${isBullhead ? 'Gren 2' : 'Afgrening'}:</strong></p>
             <p>Hastighed: ${formatLocalFloat(bd.v_ms || 0, 2)} m/s, Zeta: ${formatLocalFloat(bd.zeta || 0, 3)}, Pₐᵧₙ: ${formatLocalFloat(bd.Pdyn_Pa || 0, 2)} Pa</p>
-            <p>Tryktab (Δp): <strong>${formatLocalFloat(state.portPressureLoss ? state.portPressureLoss.outlet_branch : 0, 2)} Pa</strong></p>`;
+            <p>Tryktab (Δp): <strong>${formatLocalFloat(state.portPressureLoss ? state.portPressureLoss[port2] : 0, 2)} Pa</strong></p>`;
         } else {
             s_html = `<p>Gammel struktur gemt. Åben og gem igen for opdatering.</p>`;
         }
@@ -681,11 +709,19 @@ export function printDocumentation(event) {
         const pType = c.fittingType || props.type || c.type || '';
 
         if (pType.startsWith('tee_')) {
-            const chosenPath = data.chosenPath || props.path || 'straight';
-            airflowOutText = state.airflow_out ? formatLocalFloat(state.airflow_out['outlet_' + chosenPath] || state.airflow_out['outlet'] || 0, 0) : '-';
-            // If merging, use total outlet
+            const isBullhead = pType === 'tee_bullhead';
             if (props.flowType === 'merging') {
                 airflowOutText = state.airflow_out ? formatLocalFloat(state.airflow_out['outlet'] || 0, 0) : '-';
+            } else {
+                if (isBullhead) {
+                    const q1 = state.airflow_out ? state.airflow_out['outlet_path1'] : 0;
+                    const q2 = state.airflow_out ? state.airflow_out['outlet_path2'] : 0;
+                    airflowOutText = `G1: ${formatLocalFloat(q1, 0)} | G2: ${formatLocalFloat(q2, 0)}`;
+                } else {
+                    const qs = state.airflow_out ? state.airflow_out['outlet_straight'] : 0;
+                    const qb = state.airflow_out ? state.airflow_out['outlet_branch'] : 0;
+                    airflowOutText = `L: ${formatLocalFloat(qs, 0)} | A: ${formatLocalFloat(qb, 0)}`;
+                }
             }
         } else {
             airflowOutText = state.airflow_out ? formatLocalFloat(state.airflow_out['outlet'] || airflowIn, 0) : formatLocalFloat(airflowIn, 0);
@@ -1387,6 +1423,20 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                     <label for="${id('sys_orientation')}">Planens Retning (3D)</label>
                     <select id="${id('sys_orientation')}" class="input-field">${orientationOptions}</select>
                 </div>`;
+                
+            setTimeout(() => {
+                if (initialData && initialData.properties) {
+                    const data = initialData.properties;
+                    if (document.getElementById(id('sys_tee_q_out1'))) document.getElementById(id('sys_tee_q_out1')).value = data.q_out1 || '';
+                    if (document.getElementById(id('sys_tee_q_out2'))) document.getElementById(id('sys_tee_q_out2')).value = data.q_out2 || '';
+                    if (data.d_in && document.getElementById(id('sys_tee_d_in'))) document.getElementById(id('sys_tee_d_in')).value = data.d_in;
+                    if (data.d_out1 && document.getElementById(id('sys_tee_d_out1'))) document.getElementById(id('sys_tee_d_out1')).value = data.d_out1;
+                    if (data.d_out2 && document.getElementById(id('sys_tee_d_out2'))) document.getElementById(id('sys_tee_d_out2')).value = data.d_out2;
+                    if (data.orientation && document.getElementById(id('sys_orientation'))) {
+                        document.getElementById(id('sys_orientation')).value = data.orientation;
+                    }
+                }
+            }, 0);
             break;
     }
 
@@ -1427,15 +1477,6 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
         if (p.d1) setVal(id('sys_d1'), p.d1);
         if (p.d2) setVal(id('sys_d2'), p.d2);
         
-        if (p.d_in) setVal(id('sys_tee_d_in'), p.d_in);
-        if (p.d_straight) setVal(id('sys_tee_d_straight'), p.d_straight);
-        if (p.d_branch) setVal(id('sys_tee_d_branch'), p.d_branch);
-        if (p.d_straight) setVal(id('sys_tee_d_out1'), p.d_straight);
-        if (p.d_branch) setVal(id('sys_tee_d_out2'), p.d_branch);
-        if (p.q_straight) setVal(id('sys_tee_q_out1'), p.q_straight);
-        if (p.q_branch) setVal(id('sys_tee_q_out2'), p.q_branch);
-        if (p.orientation) setVal(id('sys_orientation'), p.orientation);
-
         if (p.ambientTemp !== undefined) setVal(id('sys_ambient'), p.ambientTemp);
         if (p.isoThick !== undefined) setVal(id('sys_isoThick'), p.isoThick);
         if (p.isoLambda !== undefined) setVal(id('sys_isoLambda'), p.isoLambda);
