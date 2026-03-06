@@ -1076,13 +1076,9 @@ function recalculateSystem() {
         let currentParentId = parentId;
         let currentParentPort = parentPort;
 
+        // VIGTIGT: Vi bruger ALTID den visuelle 'inletDimension' som tilknytningspunkt.
+        // Fjerner den gamle "merging" override for at sikre at tegneretningen fastholdes.
         let childAttachDim = newCalc.inletDimension;
-        if (globalParams.globalFlowType === 'merging') {
-            const outDim = newCalc.outletDimension;
-            if (outDim) {
-                childAttachDim = outDim['outlet'] || outDim['outlet_straight'] || outDim['outlet_branch'] || outDim['outlet_path1'] || outDim['outlet_path2'] || newCalc.inletDimension;
-            }
-        }
 
         if (incomingDim && childAttachDim && !physics.areDimensionsEqual(incomingDim, childAttachDim)) {
             const parentComp = parentId ? graph.nodes[parentId] : null;
@@ -1117,16 +1113,8 @@ function recalculateSystem() {
             }
 
             let portDim = null;
-            if (globalParams.globalFlowType === 'merging' && comp.state.inletDimensions) {
-                const branchMap = { 
-                    'outlet_straight': 'straight', 
-                    'outlet_branch': 'branch',
-                    'outlet_path1': 'path1',
-                    'outlet_path2': 'path2'
-                };
-                const branchKey = branchMap[outPort] || 'straight';
-                portDim = comp.state.inletDimensions[branchKey];
-            } else if (comp.state.outletDimension && comp.state.outletDimension[outPort]) {
+            // Fjerner den gamle "merging" override. Visuel afgang er ALTID 'outletDimension' for porten.
+            if (comp.state.outletDimension && comp.state.outletDimension[outPort]) {
                 portDim = comp.state.outletDimension[outPort];
             } else if (comp.state.outletDimension && comp.state.outletDimension['outlet']) {
                 portDim = comp.state.outletDimension['outlet'];
