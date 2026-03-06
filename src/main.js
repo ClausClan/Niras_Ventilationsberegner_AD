@@ -651,7 +651,6 @@ function getFittingData(suffix, typeOverride = null) {
             const isBullhead = fittingType === 'tee_bullhead';
 
             if (isBullhead) {
-                // NY KORREKT HÅNDTERING AF BULLHEAD (path1 / path2)
                 properties.d_in = f('sys_tee_d_in');
                 properties.d_out1 = f('sys_tee_d_out1');
                 properties.d_out2 = f('sys_tee_d_out2');
@@ -699,7 +698,6 @@ function getFittingData(suffix, typeOverride = null) {
 
     return result;
 }
-
 
 function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomingDim, globalParams, calculateThermodynamicsFlag = true) {
     const { RHO, NU, globalAmbient, systemTemp } = globalParams;
@@ -813,20 +811,22 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
 
             calculationDetails = { A_m2: A, v_ms: v, zeta, Pdyn_Pa };
         } else if (p.type && (p.type.includes('expansion') || p.type.includes('contraction') || p.type.includes('transition'))) {
+            // --- KORREKT LÆSNING AF MANUELLE OVERGANGE ---
             const isExhaust = globalParams.globalFlowType === 'merging';
 
             let A1_visual, A2_visual;
             const shape1 = p.inletShape || (p.type.includes('rect') && !p.type.includes('transition') ? 'rect' : (p.type === 'transition_rect_round' ? 'rect' : 'round'));
             const shape2 = p.outletShape || (p.type.includes('rect') && !p.type.includes('transition') ? 'rect' : (p.type === 'transition_round_rect' ? 'rect' : 'round'));
             
+            // Fanger variabler fra manual input ELLER fra eksisterende graf node
             let dim1_d = p.d1 || p.d || 0, dim1_h = p.h1 || p.h || 0, dim1_w = p.w1 || p.w || 0;
             let dim2_d = p.d2 || p.d || 0, dim2_h = p.h2 || p.h || 0, dim2_w = p.w2 || p.w || 0;
             
             inletDim = shape1 === 'round' ? { shape: 'round', d: dim1_d } : { shape: 'rect', h: dim1_h, w: dim1_w };
             outletDim = shape2 === 'round' ? { shape: 'round', d: dim2_d } : { shape: 'rect', h: dim2_h, w: dim2_w };
             
-            A1_visual = shape1 === 'round' ? Math.PI * (getInternalDim(dim1_d) / 2000) ** 2 : (getInternalDim(dim1_h) / 1000) * (getInternalDim(dim1_w) / 1000);
-            A2_visual = shape2 === 'round' ? Math.PI * (getInternalDim(dim2_d) / 2000) ** 2 : (getInternalDim(dim2_h) / 1000) * (getInternalDim(dim2_w) / 1000);
+            A1_visual = shape1 === 'round' ? Math.PI * Math.pow(getInternalDim(dim1_d) / 2000, 2) : (getInternalDim(dim1_h) / 1000) * (getInternalDim(dim1_w) / 1000);
+            A2_visual = shape2 === 'round' ? Math.PI * Math.pow(getInternalDim(dim2_d) / 2000, 2) : (getInternalDim(dim2_h) / 1000) * (getInternalDim(dim2_w) / 1000);
 
             const isExpansionVisually = A2_visual > A1_visual;
             const isExpansionAerodynamically = isExhaust ? !isExpansionVisually : isExpansionVisually;
@@ -876,7 +876,6 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
             const isBullhead = p.type === 'tee_bullhead';
 
             const d_main = p.d_in || 0;
-            // Bullhead mapper vi nu til d_out1/d_out2, normal T til straight/branch
             const d_b1 = isBullhead ? (p.d_out1 || 0) : (p.d_straight || 0);
             const d_b2 = isBullhead ? (p.d_out2 || 0) : (p.d_branch || 0);
 
