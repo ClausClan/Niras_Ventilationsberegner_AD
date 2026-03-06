@@ -654,9 +654,11 @@ export function showHelpModal() {
                     <li><strong>Automatiske Overgange:</strong> Hvis du tilføjer en komponent med en indgangsdimension, der ikke matcher den forrige komponents udgangsdimension, indsætter programmet automatisk en "OBS"-linje med en beregnet indsnævring/udvidelse for at gøre opmærksom på det nødvendige tryktab.</li>
                     <li><strong>T-stykker:</strong>T-stykkerne deler luftmængden, man skal selv huske at holde øje med luftmængde størrelserne ved split. Der kan regnes videre for alle grene, vises som "Afgrening" og "Ligeud". man kan fortsætte træet i alle afgreninger. </li>
                     <li><strong>Diagram:</strong> Med Diagram knappen kan man få vist sit system som 3D-visualisering. Med luftmængder, hastigheder og tryktab Pa/m for hver stræknig.</li>
-                    <li><strong>Temperaturberegning:</strong> I toppen af programmet kan man sætte lufttemperatur (Start), luftfugtighed (%RH) og omgivelsestemperatur. Beregningen tager højde for virkelige forhold ved at justere luftens densitet dynamisk via <strong>Ideal gasloven</strong>: <code>ρ = P_atm / (R · (T + 273.15))</code>. Dette bruges til at omregne volumenstrøm til massestrøm (<code>q_m</code> i kg/s).
-                    <br><br><strong>Varmetab i kanaler:</strong> Beregnes med en eksponentiel model over kanalens overfladeareal (A) og isoleringens U-værdi: <code>T_ud = T_omg + (T_ind - T_omg) · e^(-(U·A)/(q_m·c_p))</code>. Det samlede varmetab (W) udregnes derefter ud fra temperaturdifferencen.
-                    <br><br><strong>Blanding af luftstrømme (T-stykker):</strong> Når luftstrømme løber sammen ved udsugning, beregnes den nye temperatur som et massestrøms-vægtet gennemsnit: <code>T_blandet = (q_m1·T_1 + q_m2·T_2) / (q_m1 + q_m2)</code>. Det sikrer præcision, fordi kold luft er tungere end varm luft. I 3D-diagrammet kan man via visningsmenuen farvekode systemet og visuelt følge disse temperaturtab/gevinster fra start til slut.</li>
+                    <li><strong>Temperaturberegning:</strong> I toppen af programmet kan man sætte lufttemperatur (Start), luftfugtighed (%RH) og omgivelsestemperatur. Beregningen tager højde for virkelige forhold ved at justere luftens densitet dynamisk via <strong>Ideal gasloven</strong>: <code>ρ = P_atm / (R · (T + 273.15))</code>. Dette bruges til at omregne volumenstrøm til massestrøm (<code>q_m</code> i kg/s). 
+                    <br><br>
+                    <strong>Varmetab i kanaler:</strong> Beregnes med en eksponentiel model over kanalens overfladeareal (A) og isoleringens U-værdi: <code>T_ud = T_omg + (T_ind - T_omg) · e^(-(U·A)/(q_m·c_p))</code>. Det samlede varmetab (W) udregnes derefter ud fra temperaturdifferencen.
+                    <br><br>
+                    <strong>Blanding af luftstrømme (T-stykker):</strong> Når luftstrømme løber sammen ved udsugning, beregnes den nye temperatur som et massestrøms-vægtet gennemsnit: <code>T_blandet = (q_m1·T_1 + q_m2·T_2) / (q_m1 + q_m2)</code>. Det sikrer præcision, fordi kold luft er tungere end varm luft. I 3D-diagrammet kan man via visningsmenuen farvekode systemet og visuelt følge disse temperaturtab/gevinster fra start til slut.</li>
                 </ul>
             </div>
         </div>`;
@@ -683,7 +685,6 @@ export function printDocumentation(event) {
         return;
     }
 
-    // --- Beregn kritisk vej (Samlet tryktab) ---
     function calculateCriticalPath(node) {
         if (!node || node.isIncluded === false) return { loss: 0 };
         const pType = node.fittingType || (node.properties && node.properties.type) || node.type || '';
@@ -718,7 +719,6 @@ export function printDocumentation(event) {
     const criticalResult = calculateCriticalPath(systemTree[0]);
     const globalCriticalPressureDrop = criticalResult.loss;
 
-    // --- Byg tabelrækker rekursivt for at vise træstruktur ---
     let tableRows = '';
     function traversePrint(c, depth, labelPath) {
         const state = c.state || {};
@@ -729,7 +729,6 @@ export function printDocumentation(event) {
         const pressureLoss = isIncluded ? (state.pressureLoss || 0) : 0;
         const velocity = isIncluded && state.velocity ? formatLocalFloat(state.velocity, 2) : '-';
 
-        // Luftmængde
         let airflowIn = state.airflow_in || c.airflow || 0;
         let airflowOutText = '-';
         const pType = c.fittingType || props.type || c.type || '';
@@ -753,7 +752,6 @@ export function printDocumentation(event) {
             airflowOutText = state.airflow_out ? formatLocalFloat(state.airflow_out['outlet'] || airflowIn, 0) : formatLocalFloat(airflowIn, 0);
         }
 
-        // Temperatur
         let tIn = parseFloat(state.temperature_in);
         let tOutRaw = state.temperature_out ? 
             (state.temperature_out['outlet'] !== undefined ? state.temperature_out['outlet'] : 
@@ -771,13 +769,11 @@ export function printDocumentation(event) {
             }
         }
 
-        // Isolering
         let isoText = '-';
         if (props.isoThick !== undefined && props.isoThick > 0) {
             isoText = `${props.isoThick} mm<br><span style="font-size:0.8em;color:#666;">λ: ${props.isoLambda || 0.037}</span>`;
         }
 
-        // Detaljer (Zeta, tryktab pr m)
         let detailsText = '-';
         if (c.type === 'straightDuct' && data.pressureDrop) {
             detailsText = `λ: ${formatLocalFloat(data.lambda, 4)}<br><span style="font-size:0.8em;color:#666;">${formatLocalFloat(data.pressureDrop, 2)} Pa/m</span>`;
@@ -787,7 +783,6 @@ export function printDocumentation(event) {
             detailsText = `ζ: ${formatLocalFloat(data.zeta, 3)}`;
         }
 
-        // Træ-indentering
         const indent = Math.max(0, depth * 20);
         let treePrefix = labelPath ? `<div style="font-size:10px; color:#555; margin-bottom:2px;">&#8627; ${labelPath}</div>` : '';
         let nameHtml = `<strong>${c.name}</strong>${isIncluded ? '' : ' <em style="color:#999;">(Deaktiveret)</em>'}<br><span style="font-size:0.8em;color:#666;">${c.details || ''}</span>`;
@@ -807,7 +802,6 @@ export function printDocumentation(event) {
             </tr>
         `;
 
-        // Gennemløb børn
         let expectedPorts = ['outlet'];
         if (pType.startsWith('tee_')) {
             if (pType === 'tee_bullhead') {
@@ -842,7 +836,6 @@ export function printDocumentation(event) {
         });
     }
 
-    // --- Saml den fulde HTML til print ---
     const projectName = document.getElementById('projectName').value;
     const startAirflow = document.getElementById('system_airflow').value;
 
@@ -902,7 +895,6 @@ export function printDocumentation(event) {
         </div>
     `;
 
-    // --- Opret, print, og fjern print-elementet ---
     const printContainer = document.createElement('div');
     printContainer.id = 'print-container';
     printContainer.innerHTML = printHtml;
@@ -1298,11 +1290,10 @@ export function handleComponentTypeChange() {
             <button type="button" class="button primary" onclick="window.handleInlineComponentSubmit(event)">Tilføj til System</button>`;
     }
 }
+
 export function renderSystemDuctInputs(container, initialData = null) {
     const roundOptions = STANDARD_ROUND_SIZES_MM.map(s => `<option value="${s}">${s} mm</option>`).join('');
     const rectOptions = STANDARD_RECT_SIZES_MM.map(s => `<option value="${s}">${s} mm</option>`).join('');
-    const systemComponents = getSystemComponents();
-    const lastComponent = systemComponents.length > 0 ? systemComponents[systemComponents.length - 1] : null;
 
     const isAddMode = container.id === 'systemComponentInputsContainer' || container.id.startsWith('add_container') || container.id === 'inlineFittingInputsContainer';
     const isInlineAdd = container.id.startsWith('add_container') || container.id === 'inlineFittingInputsContainer' || container.id === 'inlineDuctInputsContainer';
@@ -1311,9 +1302,20 @@ export function renderSystemDuctInputs(container, initialData = null) {
     const btnAction = initialData ? `window.handleUpdateComponent('${initialData.id}')` : 'window.handleInlineComponentSubmit(event)';
     const btnText = initialData ? 'Opdater Komponent' : 'Tilføj til System';
 
+    // Bestem default form baseret på parentDim (hvis vi tilføjer inline)
+    let defaultShape = 'round';
+    if (isInlineAdd && window.currentParentDim) {
+        defaultShape = window.currentParentDim.shape === 'rect' ? 'rectangular' : 'round';
+    } else if (initialData && initialData.properties && (initialData.properties.shape === 'rect' || initialData.properties.shape === 'rectangular')) {
+        defaultShape = 'rectangular';
+    }
+
     container.innerHTML = `
         <div class="input-group"><label for="ductLength${suffix}">Længde</label><div class="input-unit-wrapper" data-unit="m"><input type="text" id="ductLength${suffix}" class="input-field" required></div></div>
-        <div class="input-group"><label>Kanalform</label><div class="radio-group"><input type="radio" id="sysDuctRound${suffix}" name="sysDuctShape${suffix}" value="round" checked><label for="sysDuctRound${suffix}">Cirkulær</label><input type="radio" id="sysDuctRect${suffix}" name="sysDuctShape${suffix}" value="rectangular"><label for="sysDuctRect${suffix}">Rektangulær</label></div></div>
+        <div class="input-group"><label>Kanalform</label><div class="radio-group">
+            <input type="radio" id="sysDuctRound${suffix}" name="sysDuctShape${suffix}" value="round" ${defaultShape === 'round' ? 'checked' : ''}><label for="sysDuctRound${suffix}">Cirkulær</label>
+            <input type="radio" id="sysDuctRect${suffix}" name="sysDuctShape${suffix}" value="rectangular" ${defaultShape === 'rectangular' ? 'checked' : ''}><label for="sysDuctRect${suffix}">Rektangulær</label>
+        </div></div>
         <div id="sysDuctInputsContainer${suffix}"></div>
         
         <div style="margin-top:15px; border-top: 1px solid var(--border-color); padding-top: 10px;">
@@ -1333,82 +1335,69 @@ export function renderSystemDuctInputs(container, initialData = null) {
 
         if (shape === 'round') {
             subContainer.innerHTML = `<div class="input-group"><label for="ductDiameter${suffix}">Diameter</label><select id="ductDiameter${suffix}" class="input-field">${roundOptions}</select></div>`;
-            // Prefill
             if (initialData && initialData.properties) {
-                const dim = initialData.properties;
-                if (dim && dim.shape === 'round') {
-                    if (document.getElementById(`ductDiameter${suffix}`)) document.getElementById(`ductDiameter${suffix}`).value = dim.diameter || dim.d;
-                }
-            } else if (!initialData && lastComponent && lastComponent.outletDimension && lastComponent.outletDimension.shape === 'round') {
-                if (document.getElementById(`ductDiameter${suffix}`)) document.getElementById(`ductDiameter${suffix}`).value = lastComponent.outletDimension.d;
+                if (initialData.properties.shape === 'round') document.getElementById(`ductDiameter${suffix}`).value = initialData.properties.diameter || initialData.properties.d;
+            } else if (isInlineAdd && window.currentParentDim && window.currentParentDim.shape === 'round') {
+                // Nedarvning af diameter fra parent
+                document.getElementById(`ductDiameter${suffix}`).value = window.currentParentDim.d;
             }
         } else {
-            subContainer.innerHTML = `<div class="input-field-group"><div class="input-group"><label for="ductSideA${suffix}">Side A</label><select id="ductSideA${suffix}" class="input-field">${rectOptions}</select></div><div class="input-group"><label for="ductSideB${suffix}">Side B</label><select id="ductSideB${suffix}" class="input-field">${rectOptions}</select></div></div>`;
-            // Prefill
+            subContainer.innerHTML = `<div class="input-field-group"><div class="input-group"><label for="ductSideA${suffix}">Side A (Højde)</label><select id="ductSideA${suffix}" class="input-field">${rectOptions}</select></div><div class="input-group"><label for="ductSideB${suffix}">Side B (Bredde)</label><select id="ductSideB${suffix}" class="input-field">${rectOptions}</select></div></div>`;
             if (initialData && initialData.properties) {
-                const dim = initialData.properties;
-                if (dim && (dim.shape === 'rect' || dim.shape === 'rectangular')) {
-                    if (document.getElementById(`ductSideA${suffix}`)) document.getElementById(`ductSideA${suffix}`).value = dim.sideA || dim.h;
-                    if (document.getElementById(`ductSideB${suffix}`)) document.getElementById(`ductSideB${suffix}`).value = dim.sideB || dim.w;
+                if (initialData.properties.shape === 'rect' || initialData.properties.shape === 'rectangular') {
+                    document.getElementById(`ductSideA${suffix}`).value = initialData.properties.sideA || initialData.properties.h;
+                    document.getElementById(`ductSideB${suffix}`).value = initialData.properties.sideB || initialData.properties.w;
                 }
-            } else if (!initialData && lastComponent && lastComponent.outletDimension && lastComponent.outletDimension.shape === 'rect') {
-                if (document.getElementById(`ductSideA${suffix}`)) document.getElementById(`ductSideA${suffix}`).value = lastComponent.outletDimension.h;
-                if (document.getElementById(`ductSideB${suffix}`)) document.getElementById(`ductSideB${suffix}`).value = lastComponent.outletDimension.w;
+            } else if (isInlineAdd && window.currentParentDim && window.currentParentDim.shape === 'rect') {
+                // Nedarvning af firkant-mål fra parent
+                document.getElementById(`ductSideA${suffix}`).value = window.currentParentDim.h;
+                document.getElementById(`ductSideB${suffix}`).value = window.currentParentDim.w;
             }
         }
     };
 
     document.getElementsByName(`sysDuctShape${suffix}`).forEach(r => r.addEventListener('change', renderInputs));
+    renderInputs(); // Kør den med det samme
 
+    // Pre-fill generelle data (Længde og Isolering)
     if (initialData && initialData.properties) {
         document.getElementById(`ductLength${suffix}`).value = initialData.properties.length || '';
-
         const p = initialData.properties;
-        if (p.ambientTemp !== undefined && document.getElementById(`ductAmbient${suffix}`)) document.getElementById(`ductAmbient${suffix}`).value = p.ambientTemp;
-        if (p.isoThick !== undefined && document.getElementById(`ductIsoThick${suffix}`)) document.getElementById(`ductIsoThick${suffix}`).value = p.isoThick;
-        if (p.isoLambda !== undefined && document.getElementById(`ductIsoLambda${suffix}`)) document.getElementById(`ductIsoLambda${suffix}`).value = p.isoLambda;
-
-        if (p && (p.shape === 'rect' || p.shape === 'rectangular')) {
-            document.getElementById(`sysDuctRect${suffix}`).checked = true;
-        }
+        if (p.ambientTemp !== undefined) document.getElementById(`ductAmbient${suffix}`).value = p.ambientTemp;
+        if (p.isoThick !== undefined) document.getElementById(`ductIsoThick${suffix}`).value = p.isoThick;
+        if (p.isoLambda !== undefined) document.getElementById(`ductIsoLambda${suffix}`).value = p.isoLambda;
+    } else if (isInlineAdd && window.currentParentProps) {
+        // Nedarvning af isoleringsegenskaber fra parent
+        const p = window.currentParentProps;
+        if (p.ambientTemp !== undefined) document.getElementById(`ductAmbient${suffix}`).value = p.ambientTemp;
+        if (p.isoThick !== undefined) document.getElementById(`ductIsoThick${suffix}`).value = p.isoThick;
+        if (p.isoLambda !== undefined) document.getElementById(`ductIsoLambda${suffix}`).value = p.isoLambda;
     }
-
-    renderInputs();
 }
 
 export function renderSystemFittingInputs(container = null, initialData = null) {
     const targetContainer = container || document.getElementById('systemFittingInputsContainer');
     const isAddMode = targetContainer.id === 'systemComponentInputsContainer' || targetContainer.id.startsWith('add_container') || targetContainer.id === 'inlineFittingInputsContainer' || targetContainer.id === 'systemFittingInputsContainer';
     const isEditMode = !isAddMode && initialData && initialData.id;
-    const isInlineAdd = targetContainer.id.startsWith('add_container');
+    const isInlineAdd = targetContainer.id.startsWith('add_container') || targetContainer.id === 'inlineFittingInputsContainer';
     const suffix = isEditMode ? '_edit' : (isInlineAdd ? '_inline' : '');
 
     let fittingType;
     if (initialData && initialData.type) {
         fittingType = (initialData.properties && initialData.properties.type) ? initialData.properties.type : initialData.type;
-        // Hvis den har fittingType defineret på rod-niveau (som auto-overgange), brug den i stedet
         if (initialData.fittingType) fittingType = initialData.fittingType;
     } else {
-        const typeSelect = document.getElementById(`systemFittingType${suffix}`);
+        const typeSelect = document.getElementById(`systemFittingType${suffix}`) || document.getElementById('inlineFittingType');
         fittingType = typeSelect ? typeSelect.value : null;
     }
 
     if (!fittingType) return;
 
-    const systemComponents = getSystemComponents();
     targetContainer.innerHTML = '';
-
-    const lastComponent = systemComponents.length > 0 ? systemComponents[systemComponents.length - 1] : null;
     const roundOptions = STANDARD_ROUND_SIZES_MM.map(s => `<option value="${s}">${s} mm</option>`).join('');
     const rectOptions = STANDARD_RECT_SIZES_MM.map(s => `<option value="${s}">${s} mm</option>`).join('');
-    const orientationOptions = `
-        <option value="Left">Venstre</option>
-        <option value="Right">Højre</option>
-        <option value="Up">Op (Loft)</option>
-        <option value="Down">Ned (Gulv)</option>
-    `;
+    const orientationOptions = `<option value="Left">Venstre</option><option value="Right">Højre</option><option value="Up">Op (Loft)</option><option value="Down">Ned (Gulv)</option>`;
     let inputsHtml = '';
-
     const id = (base) => `${base}${suffix}`;
 
     switch (fittingType) {
@@ -1467,7 +1456,6 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
             break;
         case 'tee_sym':
         case 'tee_asym': {
-            // ALTID BRUG DEN NYE RETNINGSLØSE UI I SYSTEM-BUILDEREN
             const isSym = fittingType === 'tee_sym';
             const diameterInputs = isSym ?
                 `<div class="input-group"><label>Diameter (alle grene)</label><select id="${id('sys_tee_d_in')}" class="input-field">${roundOptions}</select></div>` :
@@ -1492,20 +1480,6 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                         <select id="${id('sys_orientation')}" class="input-field">${orientationOptions}</select>
                     </div>
                 </div>`;
-
-            setTimeout(() => {
-                if (initialData && initialData.properties) {
-                    const data = initialData.properties;
-                    if (document.getElementById(id('sys_tee_q_straight'))) document.getElementById(id('sys_tee_q_straight')).value = data.q_straight || '';
-                    if (document.getElementById(id('sys_tee_q_branch'))) document.getElementById(id('sys_tee_q_branch')).value = data.q_branch || '';
-                    if (data.d_in && document.getElementById(id('sys_tee_d_in'))) document.getElementById(id('sys_tee_d_in')).value = data.d_in;
-                    if (data.d_straight && document.getElementById(id('sys_tee_d_straight'))) document.getElementById(id('sys_tee_d_straight')).value = data.d_straight;
-                    if (data.d_branch && document.getElementById(id('sys_tee_d_branch'))) document.getElementById(id('sys_tee_d_branch')).value = data.d_branch;
-                    if (data.orientation && document.getElementById(id('sys_orientation'))) {
-                        document.getElementById(id('sys_orientation')).value = data.orientation;
-                    }
-                }
-            }, 0);
             break;
         }
         case 'tee_bullhead':
@@ -1529,20 +1503,6 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                     <label for="${id('sys_orientation')}">Planens Retning (3D)</label>
                     <select id="${id('sys_orientation')}" class="input-field">${orientationOptions}</select>
                 </div>`;
-                
-            setTimeout(() => {
-                if (initialData && initialData.properties) {
-                    const data = initialData.properties;
-                    if (document.getElementById(id('sys_tee_q_out1'))) document.getElementById(id('sys_tee_q_out1')).value = data.q_out1 || '';
-                    if (document.getElementById(id('sys_tee_q_out2'))) document.getElementById(id('sys_tee_q_out2')).value = data.q_out2 || '';
-                    if (data.d_in && document.getElementById(id('sys_tee_d_in'))) document.getElementById(id('sys_tee_d_in')).value = data.d_in;
-                    if (data.d_out1 && document.getElementById(id('sys_tee_d_out1'))) document.getElementById(id('sys_tee_d_out1')).value = data.d_out1;
-                    if (data.d_out2 && document.getElementById(id('sys_tee_d_out2'))) document.getElementById(id('sys_tee_d_out2')).value = data.d_out2;
-                    if (data.orientation && document.getElementById(id('sys_orientation'))) {
-                        document.getElementById(id('sys_orientation')).value = data.orientation;
-                    }
-                }
-            }, 0);
             break;
     }
 
@@ -1562,55 +1522,77 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
         targetContainer.innerHTML = inputsHtml + `<button type="button" class="button primary" onclick="${btnAction}">${btnText}</button>`;
     }
 
-    if (initialData && initialData.properties) {
-        const p = initialData.properties;
-        if (p.d) setVal(id('sys_d'), p.d);
-        if (p.angle) setVal(id('sys_angle'), p.angle);
-        if (p.angle) setVal(id('sys_angle_dim'), p.angle);
-        if (p.angle) setVal(id('sys_angle_r'), p.angle);
-        if (p.rd) setVal(id('sys_rd'), p.rd);
-        if (p.h) setVal(id('sys_h'), p.h);
-        if (p.w) setVal(id('sys_w'), p.w);
-        if (p.rh) setVal(id('sys_rh'), p.rh);
-        
-        // Rektangulær udvidelse inputs
-        if (p.h1) setVal(id('sys_h1'), p.h1);
-        if (p.w1) setVal(id('sys_w1'), p.w1);
-        if (p.h2) setVal(id('sys_h2'), p.h2);
-        if (p.w2) setVal(id('sys_w2'), p.w2);
-
-        // Cirkulær udvidelse inputs
-        if (p.d1) setVal(id('sys_d1'), p.d1);
-        if (p.d2) setVal(id('sys_d2'), p.d2);
-        
-        if (p.ambientTemp !== undefined) setVal(id('sys_ambient'), p.ambientTemp);
-        if (p.isoThick !== undefined) setVal(id('sys_isoThick'), p.isoThick);
-        if (p.isoLambda !== undefined) setVal(id('sys_isoLambda'), p.isoLambda);
-    } else if (!isEditMode && lastComponent && lastComponent.outletDimension) {
-        const lastDim = lastComponent.outletDimension;
-        if (lastDim.shape === 'round') {
-            ['sys_d', 'sys_d1', 'sys_tee_d_in'].forEach(base => {
-                setVal(id(base), lastDim.d);
-            });
-        }
-    }
-
+    // Set Values Helper
     function setVal(elemId, val) {
         const el = document.getElementById(elemId);
         if (el) el.value = val;
     }
+
+    // Garanter DOM er klar før pre-fill
+    setTimeout(() => {
+        if (initialData && initialData.properties) {
+            const p = initialData.properties;
+            if (p.d) setVal(id('sys_d'), p.d);
+            if (p.angle) setVal(id('sys_angle'), p.angle);
+            if (p.angle) setVal(id('sys_angle_dim'), p.angle);
+            if (p.angle) setVal(id('sys_angle_r'), p.angle);
+            if (p.rd) setVal(id('sys_rd'), p.rd);
+            if (p.h) setVal(id('sys_h'), p.h);
+            if (p.w) setVal(id('sys_w'), p.w);
+            if (p.rh) setVal(id('sys_rh'), p.rh);
+            if (p.h1) setVal(id('sys_h1'), p.h1);
+            if (p.w1) setVal(id('sys_w1'), p.w1);
+            if (p.h2) setVal(id('sys_h2'), p.h2);
+            if (p.w2) setVal(id('sys_w2'), p.w2);
+            if (p.d1) setVal(id('sys_d1'), p.d1);
+            if (p.d2) setVal(id('sys_d2'), p.d2);
+            if (p.ambientTemp !== undefined) setVal(id('sys_ambient'), p.ambientTemp);
+            if (p.isoThick !== undefined) setVal(id('sys_isoThick'), p.isoThick);
+            if (p.isoLambda !== undefined) setVal(id('sys_isoLambda'), p.isoLambda);
+
+            // Tee specifik
+            if (p.q_straight) setVal(id('sys_tee_q_straight'), p.q_straight);
+            if (p.q_branch) setVal(id('sys_tee_q_branch'), p.q_branch);
+            if (p.q_out1) setVal(id('sys_tee_q_out1'), p.q_out1);
+            if (p.q_out2) setVal(id('sys_tee_q_out2'), p.q_out2);
+            if (p.d_in) setVal(id('sys_tee_d_in'), p.d_in);
+            if (p.d_straight) setVal(id('sys_tee_d_straight'), p.d_straight);
+            if (p.d_branch) setVal(id('sys_tee_d_branch'), p.d_branch);
+            if (p.d_out1) setVal(id('sys_tee_d_out1'), p.d_out1);
+            if (p.d_out2) setVal(id('sys_tee_d_out2'), p.d_out2);
+            if (p.orientation) setVal(id('sys_orientation'), p.orientation);
+            
+        } else if (isInlineAdd && window.currentParentDim) {
+            // Nedarvning af dimensioner og form fra forælder!
+            const dim = window.currentParentDim;
+            if (dim.shape === 'round') {
+                setVal(id('sys_d'), dim.d);
+                setVal(id('sys_d1'), dim.d);
+                setVal(id('sys_tee_d_in'), dim.d);
+            } else if (dim.shape === 'rect') {
+                setVal(id('sys_h'), dim.h);
+                setVal(id('sys_w'), dim.w);
+                setVal(id('sys_h1'), dim.h);
+                setVal(id('sys_w1'), dim.w);
+            }
+
+            if (window.currentParentProps) {
+                const pp = window.currentParentProps;
+                if (pp.ambientTemp !== undefined) setVal(id('sys_ambient'), pp.ambientTemp);
+                if (pp.isoThick !== undefined) setVal(id('sys_isoThick'), pp.isoThick);
+                if (pp.isoLambda !== undefined) setVal(id('sys_isoLambda'), pp.isoLambda);
+            }
+        }
+    }, 0);
 }
 
 export function showEditForm(id) {
-    // 1. Close any existing edit forms (cleanup)
     const existingEditRows = document.querySelectorAll('.edit-row');
     existingEditRows.forEach(row => row.remove());
 
-    // 2. Find Component and Row
     const component = getSystemComponent(id);
     if (!component) return;
 
-    // Find the row that contains the edit button with this ID
     const rows = document.querySelectorAll('#systemComponentsContainer tr');
     let targetRow = null;
     rows.forEach(row => {
@@ -1621,11 +1603,9 @@ export function showEditForm(id) {
 
     if (!targetRow) return;
 
-    // 3. Insert Edit Row
     const editRow = document.createElement('tr');
     editRow.className = 'edit-row';
     editRow.style.background = '#f9f9f9';
-    // Colspan 10 to span full width (adjust based on actual column count, 7 currently)
     const editCell = document.createElement('td');
     editCell.colSpan = 7;
     editCell.style.padding = '20px';
@@ -1634,7 +1614,6 @@ export function showEditForm(id) {
     editRow.appendChild(editCell);
     targetRow.after(editRow);
 
-    // 4. Render Form
     const suffix = '_edit';
     const containerId = `edit_container_${id}`;
     editCell.innerHTML = `
@@ -1651,10 +1630,8 @@ export function showEditForm(id) {
     if (component.type === 'straightDuct') {
         renderSystemDuctInputs(container, component);
     } else if (component.type === 'fitting' || pType.startsWith('bend') || pType.startsWith('tee') || pType.startsWith('expansion') || pType.startsWith('contraction') || pType.startsWith('transition')) {
-        // Vi bruger pType for at være sikre på, at renderSystemFittingInputs kender den præcise overgang
         renderSystemFittingInputs(container, component);
     } else if (component.type === 'manualLoss') {
-        // Manual rendering for manual loss
         container.innerHTML = `
             <div class="input-group"><label for="manualPressureLoss${suffix}">Tryktab</label><div class="input-unit-wrapper" data-unit="Pa"><input type="text" id="manualPressureLoss${suffix}" class="input-field" value="${component.pressureLoss}" required></div></div>
             <div class="input-group"><label for="manualDescription${suffix}">Beskrivelse</label><input type="text" id="manualDescription${suffix}" class="input-field" value="${component.name}" placeholder="f.eks. Spjæld, Rist, Filter"></div>
@@ -1665,16 +1642,17 @@ export function showEditForm(id) {
 }
 
 export function showAddForm(parentId, parentPort) {
-    // 1. Close any existing add forms
     const existingAddRows = document.querySelectorAll('.add-form-row');
     existingAddRows.forEach(row => row.remove());
 
     const isRoot = !parentId || parentId === 'null';
     let attachTarget = null;
 
-    // 2. Find where to attach
     if (isRoot) {
         attachTarget = document.getElementById('emptyStateTbody');
+        // Nulstil globale variabler, da der ikke er nogen forælder
+        window.currentParentDim = null;
+        window.currentParentProps = null;
     } else {
         const rows = document.querySelectorAll('#systemComponentsContainer tr');
         rows.forEach(row => {
@@ -1682,6 +1660,17 @@ export function showAddForm(parentId, parentPort) {
                 attachTarget = row;
             }
         });
+
+        // Hent forælderen fra app_state og gem dens dimensioner/isolering til auto-udfyld!
+        const parentComp = stateManager.getSystemComponent(parentId);
+        if (parentComp && parentComp.state && parentComp.state.outletDimension) {
+            let dimToInherit = parentComp.state.outletDimension[parentPort] || parentComp.state.outletDimension['outlet'];
+            window.currentParentDim = dimToInherit || null;
+            window.currentParentProps = parentComp.properties || null;
+        } else {
+            window.currentParentDim = null;
+            window.currentParentProps = null;
+        }
     }
 
     if (!attachTarget) {
@@ -1689,7 +1678,6 @@ export function showAddForm(parentId, parentPort) {
         return;
     }
 
-    // 3. Hide original button
     if (isRoot) {
         const btnContainer = document.getElementById('emptyStateButtonContainer');
         if (btnContainer) btnContainer.style.display = 'none';
@@ -1697,7 +1685,6 @@ export function showAddForm(parentId, parentPort) {
         attachTarget.style.display = 'none';
     }
 
-    // 4. Insert Form Row
     const addRow = document.createElement('tr');
     addRow.className = 'add-form-row';
     addRow.style.background = '#eef7ff';
@@ -1716,12 +1703,10 @@ export function showAddForm(parentId, parentPort) {
         attachTarget.after(addRow);
     }
 
-    // Pass the target logic to the main app handlers via global state
     window.setCorrectionTargetId(isRoot ? null : parentId);
     window.currentAddParentId = isRoot ? null : parentId;
     window.currentAddParentPort = isRoot ? null : parentPort;
 
-    // 5. Render Form HTML
     const containerId = `add_container_${parentId || 'root'}_${parentPort || 'root'}`;
     addCell.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #ccc; padding-bottom:10px;">
@@ -1733,6 +1718,8 @@ export function showAddForm(parentId, parentPort) {
                 if (emptyBtn) emptyBtn.style.display='';
                 window.currentAddParentId = null;
                 window.currentAddParentPort = null;
+                window.currentParentDim = null;
+                window.currentParentProps = null;
             ">Annuller & Luk</button>
         </div>
         
@@ -1745,7 +1732,6 @@ export function showAddForm(parentId, parentPort) {
                 <option value="manualLoss">Manuelt Tab</option>
             </select>
         </div>
-        <!-- Hidden systemComponentType input so old logic doesn't crash on 'options' -->
         <input type="hidden" id="systemComponentType" value="straightDuct">
         <div id="${containerId}"></div>
     `;
@@ -1758,46 +1744,67 @@ export function handleInlineComponentTypeChange(containerId) {
     if (!inlineTypeSelect || !container) return;
 
     const type = inlineTypeSelect.value;
-    container.innerHTML = ''; // Clear old inputs
+    container.innerHTML = ''; 
     if (hiddenTypeSelect) hiddenTypeSelect.value = type;
 
     if (type === 'straightDuct') {
         renderSystemDuctInputs(container);
-        // Quick override on the submit action to use our inline logic
         const btn = container.querySelector('button');
         if (btn) btn.setAttribute('onclick', 'window.handleInlineComponentSubmit(event)');
 
     } else if (type === 'fitting') {
-        container.innerHTML = `
-            <div class="input-group"><label for="inlineFittingType">Vælg type formstykke</label><select id="inlineFittingType" class="input-field">
-                <option value="">-- Vælg type --</option>
+        // Filtrer menuen automatisk hvis vi kender formen på parent
+        const isRect = window.currentParentDim && window.currentParentDim.shape === 'rect';
+        
+        // Lav dynamiske options baseret på om vi arver en rektangulær eller cirkulær form
+        let fittingOptionsHtml = `<option value="">-- Vælg type --</option>`;
+        
+        if (isRect) {
+            fittingOptionsHtml += `
+                <optgroup label="Bøjninger">
+                    <option value="bend_rect">Bøjning, Rektangulær</option>
+                </optgroup>
+                <optgroup label="Dimensionsændringer">
+                    <option value="expansion_rect">Udvidelse, Rektangulær</option>
+                    <option value="contraction_rect">Indsnævring, Rektangulær</option>
+                    <option value="transition_rect_round">Overgang, Firkant til Rund</option>
+                </optgroup>`;
+        } else {
+            fittingOptionsHtml += `
                 <optgroup label="Bøjninger">
                     <option value="bend_circ">Bøjning, Cirkulær</option>
-                    <option value="bend_rect">Bøjning, Rektangulær</option>
                 </optgroup>
                 <optgroup label="Dimensionsændringer">
                     <option value="expansion">Udvidelse, Cirkulær</option>
                     <option value="contraction">Indsnævring, Cirkulær</option>
-                    <option value="expansion_rect">Udvidelse, Rektangulær</option>
-                    <option value="contraction_rect">Indsnævring, Rektangulær</option>
-                    <option value="transition_rect_round">Overgang, Firkant til Rund</option>
                     <option value="transition_round_rect">Overgang, Rund til Firkant</option>
                 </optgroup>
                 <optgroup label="T-stykker (Cirkulær)">
                     <option value="tee_sym">T-stykke, Symmetrisk</option>
                     <option value="tee_asym">T-stykke, Asymmetrisk</option>
                     <option value="tee_bullhead">T-stykke (Dobbelt Afgrening)</option>
-                </optgroup>
+                </optgroup>`;
+        }
+        
+        // Tillad altid de modsatte som en "fallback" i bunden, hvis brugeren VIL lave en fejl/auto-overgang
+        fittingOptionsHtml += `
+            <optgroup label="Andre typer (Genererer automatisk formskift)">
+                ${isRect ? '<option value="bend_circ">Bøjning, Cirkulær</option><option value="expansion">Udvidelse, Cirkulær</option><option value="contraction">Indsnævring, Cirkulær</option><option value="tee_sym">T-stykke, Symmetrisk</option>' : ''}
+                ${!isRect ? '<option value="bend_rect">Bøjning, Rektangulær</option><option value="expansion_rect">Udvidelse, Rektangulær</option><option value="contraction_rect">Indsnævring, Rektangulær</option>' : ''}
+            </optgroup>`;
+
+        container.innerHTML = `
+            <div class="input-group"><label for="inlineFittingType">Vælg type formstykke</label>
+            <select id="inlineFittingType" class="input-field">
+                ${fittingOptionsHtml}
             </select></div>
             <div id="inlineFittingInputsContainer"></div>`;
 
         document.getElementById('inlineFittingType').addEventListener('change', () => {
             const fitContainer = document.getElementById('inlineFittingInputsContainer');
-            // We use our existing render logic, but need to pass the selected type since we use different IDs
             const selectedType = document.getElementById('inlineFittingType').value;
             if (selectedType) {
                 renderSystemFittingInputs(fitContainer, { type: selectedType });
-                // Override button
                 setTimeout(() => {
                     const btn = fitContainer.querySelector('button');
                     if (btn) btn.setAttribute('onclick', 'window.handleInlineComponentSubmit(event)');
