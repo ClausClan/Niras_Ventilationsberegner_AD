@@ -1506,7 +1506,7 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
             break;
     }
 
-    const btnAction = isEditMode ? `window.handleUpdateComponent('${initialData.id}')` : 'window.handleInlineComponentSubmit(event)';
+    const btnAction = isEditMode ? `window.handleValidatedUpdate('${initialData.id}', '${suffix}')` : `window.handleValidatedSubmit(event, '${suffix}')`;
     const btnText = isEditMode ? 'Opdater Komponent' : 'Tilføj til System';
 
     if (inputsHtml) {
@@ -1807,7 +1807,7 @@ export function handleInlineComponentTypeChange(containerId) {
                 renderSystemFittingInputs(fitContainer, { type: selectedType });
                 setTimeout(() => {
                     const btn = fitContainer.querySelector('button');
-                    if (btn) btn.setAttribute('onclick', 'window.handleInlineComponentSubmit(event)');
+                    if (btn) btn.setAttribute('onclick', `window.handleValidatedSubmit(event, '_inline')`);
                 }, 50);
             } else {
                 fitContainer.innerHTML = '';
@@ -1822,6 +1822,106 @@ export function handleInlineComponentTypeChange(containerId) {
     }
 }
 
+// --- Validering af T-stykker før gem/opdatering ---
+
+window.handleValidatedSubmit = function(event, suffix) {
+    if (!validateTeeFlows(suffix)) return;
+    if (typeof window.handleInlineComponentSubmit === 'function') {
+        window.handleInlineComponentSubmit(event);
+    }
+};
+
+window.handleValidatedUpdate = function(id, suffix) {
+    if (!validateTeeFlows(suffix, id)) return;
+    if (typeof window.handleUpdateComponent === 'function') {
+        window.handleUpdateComponent(id);
+    }
+};
+
+function validateTeeFlows(suffix, compId = null) {
+    const isBullhead = document.getElementById(`sys_tee_q_out1${suffix}`) !== null;
+    const isStandardTee = document.getElementById(`sys_tee_q_straight${suffix}`) !== null;
+    
+    // Hvis komponenten ikke er et T-stykke, godkendes den prompte.
+    if (!isBullhead && !isStandardTee) return true;
+
+    let q1_el = document.getElementById(isBullhead ? `sys_tee_q_out1${suffix}` : `sys_tee_q_straight${suffix}`);
+    let q2_el = document.getElementById(isBullhead ? `sys_tee_q_out2${suffix}` : `sys_tee_q_branch${suffix}`);
+
+    if (!q1_el || !q2_el) return true;
+
+    let q1_val = q1_el.value.trim();
+    let q2_val = q2_el.value.trim();
+
+    // Hvis begge er tomme, klarer systemet 50/50 fordelingen, så det godkendes.
+    if (q1_val === '' && q2_val === '') return true;
+
+    let q1 = parseLocalFloat(q1_val);
+    let q2 = parseLocalFloat(q2_val);
+
+    if ((q1_val !== '' && isNaN(q1)) || (q2_val !== '' && isNaN(q2))) {
+        alert("Fejl: Ugyldig talværdi i luftmængdefeltet for T-stykket.");
+        return false;
+    }
+
+    let currentAirflow = NaN;
+    
+    if (compId) {
+        // Vi er i Edit-mode i System Builder: Hent flow fra den gemte stat
+        const comp = stateManager.getSystemComponent(compId);
+        if (comp && comp.state && comp.state.airflow_in !== undefined) {
+            currentAirflow = comp.state.airflow_in;
+        }
+    } else {
+        // Vi er i Add-mode i System Builder: Hent flow fra forælderen
+        const parentId = window.currentAddParentId;
+        const parentPort = window.currentAddParentPort || 'outlet';
+        
+        if (parentId) {
+            const parentComp = stateManager.getSystemComponent(parentId);
+            if (parentComp && parentComp.state && parentComp.state.airflow_out) {
+                if (parentComp.state.airflow_out[parentPort] !== undefined) {
+                    currentAirflow = parentComp.state.airflow_out[parentPort];
+                } else if (parentComp.state.airflow_out['outlet'] !== undefined) {
+                    currentAirflow = parentComp.state.airflow_out['outlet'];
+                }
+            } else if (parentComp && parentComp.airflow) {
+                currentAirflow = parentComp.airflow;
+            }
+        } else {
+            // Tilføjelse af allerførste komponent (Rod-komponenten)
+            const sysAirflowEl = document.getElementById('system_airflow');
+            if (sysAirflowEl) currentAirflow = parseLocalFloat(sysAirflowEl.value);
+        }
+    }
+
+    // Hvis vi af en eller anden grund ikke kunne finde et flow, tillader vi gemning som fallback
+    if (isNaN(currentAirflow)) return true; 
+
+    // Validering af summerne
+    if (q1_val !== '' && q2_val !== '') {
+        if (Math.abs((q1 + q2) - currentAirflow) > 1.5) { 
+            alert(`Fejl: Den samlede indtastede luftmængde (${formatLocalFloat(q1+q2, 1)} m³/h) stemmer ikke overens med den indkommende luftmængde (${formatLocalFloat(currentAirflow, 1)} m³/h).\n\nRet venligst fordelingen, eller slet indholdet i begge felter for automatisk 50/50 fordeling.`);
+            return false;
+        }
+    } else if (q1_val !== '' && q2_val === '') {
+        if (q1 > currentAirflow + 1.5) {
+            alert(`Fejl: Den indtastede luftmængde (${formatLocalFloat(q1, 1)} m³/h) overstiger den samlede indkommende luftmængde (${formatLocalFloat(currentAirflow, 1)} m³/h).`);
+            return false;
+        }
+        // Auto-udfyld den manglende del som en "Quality of Life" hjælp til brugeren
+        q2_el.value = formatLocalFloat(currentAirflow - q1, 1);
+    } else if (q1_val === '' && q2_val !== '') {
+        if (q2 > currentAirflow + 1.5) {
+            alert(`Fejl: Den indtastede luftmængde (${formatLocalFloat(q2, 1)} m³/h) overstiger den samlede indkommende luftmængde (${formatLocalFloat(currentAirflow, 1)} m³/h).`);
+            return false;
+        }
+        // Auto-udfyld den manglende del som en "Quality of Life" hjælp til brugeren
+        q1_el.value = formatLocalFloat(currentAirflow - q2, 1);
+    }
+
+    return true;
+}
 
 // Expose handlers globally for inline HTML strings
 window.showAddForm = showAddForm;
