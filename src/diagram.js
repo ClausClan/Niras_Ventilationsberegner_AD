@@ -102,7 +102,7 @@ export function renderDiagram(keepControls = false) {
     if (!container) return;
 
     // --- LORTR / PIRAMIDESTUB GEOMETRI GENERATOR ---
-    // Ray-Projection Lofting forhindrer alt vridning og genererer perfekte flader
+    // Ray-Projection Lofting forhindrer alt vridning og genererer perfekte flader (inkl. flanger)
     function createTransitionGeometry(shape1, w1, h1, r1, shape2, w2, h2, r2, length_3d) {
         const segments = 64; 
         const positions = [];
@@ -125,31 +125,41 @@ export function renderDiagram(keepControls = false) {
         }
 
         const halfL = length_3d / 2;
+        const collar_3d = 50 * (100 / 1000); // 50mm = 5 3D enheder til flanger
         
-        // Vi genererer bund- og top-ringen
-        for (let i = 0; i <= segments; i++) {
-            const theta = (i / segments) * Math.PI * 2;
-            const p1 = getProfilePoint(shape1, w1, h1, r1, theta);
-            const p2 = getProfilePoint(shape2, w2, h2, r2, theta);
+        // Sikkerhed for at kraven ikke overskygger en meget kort overgang
+        const effective_collar = Math.min(collar_3d, length_3d / 3);
+        
+        // Vi bygger 4 "Ringe" for at tegne indløbskrave, svøb, og udløbskrave i ét
+        const rings = [
+            { y: -halfL,                    shape: shape1, w: w1, h: h1, r: r1, v: 0 },
+            { y: -halfL + effective_collar, shape: shape1, w: w1, h: h1, r: r1, v: 0.2 },
+            { y: halfL - effective_collar,  shape: shape2, w: w2, h: h2, r: r2, v: 0.8 },
+            { y: halfL,                     shape: shape2, w: w2, h: h2, r: r2, v: 1 }
+        ];
 
-            // Ring 0 (Bund)
-            positions.push(p1.x, -halfL, p1.z);
-            uvs.push(i / segments, 0);
-
-            // Ring 1 (Top)
-            positions.push(p2.x, halfL, p2.z);
-            uvs.push(i / segments, 1);
-        }
+        // Byg Vertices
+        rings.forEach((ring) => {
+            for (let i = 0; i <= segments; i++) {
+                const theta = (i / segments) * Math.PI * 2;
+                const pt = getProfilePoint(ring.shape, ring.w, ring.h, ring.r, theta);
+                positions.push(pt.x, ring.y, pt.z);
+                uvs.push(i / segments, ring.v);
+            }
+        });
 
         // Byg trekanter med korrekt Winding Order (normals udad)
-        for (let i = 0; i < segments; i++) {
-            const a = i * 2;
-            const b = i * 2 + 1;
-            const c = (i + 1) * 2;
-            const d = (i + 1) * 2 + 1;
+        const vertsPerRing = segments + 1;
+        for (let r = 0; r < 3; r++) { // 3 zoner: Ind-krave, Overgang, Ud-krave
+            for (let i = 0; i < segments; i++) {
+                const a = r * vertsPerRing + i;
+                const b = r * vertsPerRing + i + 1;
+                const c = (r + 1) * vertsPerRing + i;
+                const d = (r + 1) * vertsPerRing + i + 1;
 
-            indices.push(a, b, c);
-            indices.push(b, d, c);
+                indices.push(a, c, b);
+                indices.push(b, c, d);
+            }
         }
 
         const geom = new THREE.BufferGeometry();
@@ -359,7 +369,7 @@ export function renderDiagram(keepControls = false) {
                 opacity: isGhosted ? 0.5 : 1.0,
                 roughness: 0.3,
                 metalness: 0.1,
-                side: THREE.DoubleSide
+                side: THREE.DoubleSide // Ekstra sikkerhed for LORTR lofting
             };
 
             if (useGradient) {
@@ -499,36 +509,46 @@ export function renderDiagram(keepControls = false) {
             moveDist = cornerDist * 2;
         }
         else if (pType.includes('transition') || pType.includes('expansion') || pType.includes('contraction')) {
-            // LORTR / SPIDSSTYKKE OVERGANG
+            // --- LORTR / SPIDSSTYKKE OVERGANG (Skudsikker Dimensionsaflæsning) ---
             const dim1 = comp.state?.inletDimension;
             const dim2 = comp.state?.outletDimension?.outlet;
+            const p = comp.properties || {};
 
-            let w1 = 200, h1 = 200, r1 = 100, shape1 = 'round';
-            if (dim1) {
-                if (dim1.shape === 'rectangular' || dim1.shape === 'rect') {
-                    shape1 = 'rect';
-                    w1 = dim1.w || dim1.sideB || 200;
-                    h1 = dim1.h || dim1.sideA || 200;
-                    r1 = Math.max(w1, h1) / 2;
-                } else {
-                    r1 = (dim1.d || dim1.diameter || 200) / 2;
-                    w1 = r1 * 2;
-                    h1 = r1 * 2;
-                }
+            let shape1 = 'round', shape2 = 'round';
+            if (pType === 'transition_rect_round') { shape1 = 'rect'; shape2 = 'round'; }
+            else if (pType === 'transition_round_rect') { shape1 = 'round'; shape2 = 'rect'; }
+            else if (pType.includes('rect')) { shape1 = 'rect'; shape2 = 'rect'; }
+
+            // Override if explicitly set on comp (Auto transitions)
+            if (comp.shape === 'rectangular' || comp.shape === 'rect') shape1 = 'rect';
+            else if (comp.shape === 'circular' || comp.shape === 'round') shape1 = 'round';
+            
+            if (comp.shapeOut === 'rectangular' || comp.shapeOut === 'rect') shape2 = 'rect';
+            else if (comp.shapeOut === 'circular' || comp.shapeOut === 'round') shape2 = 'round';
+
+            let w1 = 200, h1 = 200, r1 = 100;
+            let w2 = 200, h2 = 200, r2 = 100;
+
+            // Indløb Dimensioner
+            if (shape1 === 'rect') {
+                w1 = parseFloat(comp.width || p.w1 || (pType === 'transition_rect_round' ? p.w : null) || dim1?.w || dim1?.sideB || 200);
+                h1 = parseFloat(comp.height || p.h1 || (pType === 'transition_rect_round' ? p.h : null) || dim1?.h || dim1?.sideA || 200);
+                r1 = Math.max(w1, h1) / 2;
+            } else {
+                const d1 = parseFloat(comp.diameter || p.d1 || (pType === 'transition_round_rect' ? p.d : null) || dim1?.d || dim1?.diameter || 200);
+                r1 = d1 / 2;
+                w1 = d1; h1 = d1;
             }
 
-            let w2 = 200, h2 = 200, r2 = 100, shape2 = 'round';
-            if (dim2) {
-                if (dim2.shape === 'rectangular' || dim2.shape === 'rect') {
-                    shape2 = 'rect';
-                    w2 = dim2.w || dim2.sideB || 200;
-                    h2 = dim2.h || dim2.sideA || 200;
-                    r2 = Math.max(w2, h2) / 2;
-                } else {
-                    r2 = (dim2.d || dim2.diameter || 200) / 2;
-                    w2 = r2 * 2;
-                    h2 = r2 * 2;
-                }
+            // Udløb Dimensioner
+            if (shape2 === 'rect') {
+                w2 = parseFloat(comp.widthOut || p.w2 || (pType === 'transition_round_rect' ? p.w : null) || dim2?.w || dim2?.sideB || 200);
+                h2 = parseFloat(comp.heightOut || p.h2 || (pType === 'transition_round_rect' ? p.h : null) || dim2?.h || dim2?.sideA || 200);
+                r2 = Math.max(w2, h2) / 2;
+            } else {
+                const d2 = parseFloat(comp.diameterOut || p.d2 || (pType === 'transition_rect_round' ? p.d : null) || dim2?.d || dim2?.diameter || 200);
+                r2 = d2 / 2;
+                w2 = d2; h2 = d2;
             }
 
             // Skalering til 3D space
@@ -536,8 +556,8 @@ export function renderDiagram(keepControls = false) {
             w1 *= sf_3d; h1 *= sf_3d; r1 *= sf_3d;
             w2 *= sf_3d; h2 *= sf_3d; r2 *= sf_3d;
 
-            // Beregn L = 100mm + beregnet længde ud fra vinkel
-            const angleDeg = comp.properties?.angle || 30;
+            // Beregn L = 100mm + beregnet længde ud fra vinkel (Som bedt om!)
+            const angleDeg = parseFloat(p.angle || 30);
             const deltaMax = Math.max(Math.abs(w1 - w2) / 2, Math.abs(h1 - h2) / 2, Math.abs(r1 - r2));
             
             let l_calc_3d = 0;
@@ -545,7 +565,7 @@ export function renderDiagram(keepControls = false) {
                 l_calc_3d = deltaMax / Math.tan(THREE.MathUtils.degToRad(angleDeg / 2));
             }
             
-            // Total længde i pixels
+            // Total længde (100mm + udregnet vinkelsmig)
             const total_length_mm = 100 + (l_calc_3d / sf_3d);
             moveDist = total_length_mm * sf_3d;
 
@@ -704,7 +724,6 @@ export function renderDiagram(keepControls = false) {
         }
     }
 
-    // --- Fejlrettelsen: Vi bruger "tree" fra toppen af funktionen! ---
     const tree = stateManager.getSystemTree();
     if (tree && tree.length > 0) {
         const startPos = new THREE.Vector3(0, 0, 0);
