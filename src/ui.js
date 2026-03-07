@@ -850,7 +850,7 @@ export function printDocumentation(event) {
     const printDate = new Date().toLocaleString('da-DK');
 
     const footerP = document.querySelector('.app-footer p');
-    const appVersionText = footerP ? footerP.textContent.split(' --- ')[0] : 'Ventilationsberegner';
+    const appVersionText = footerP ? footerP.textContent.split(' --- ')[0] : 'VentcalculatorADV';
 
     const printHtml = `
         <style>
