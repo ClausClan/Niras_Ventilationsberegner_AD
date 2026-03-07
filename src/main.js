@@ -1710,6 +1710,23 @@ async function initializeApp() {
     if (redoBtn) undoBtn.addEventListener('click', handleRedo);
 
     ui.updateUndoRedoUI(canUndo(), canRedo());
+
+    // --- AUTO-LOAD ---
+    // Sørger for at UI'et afspejler data hentet fra localStorage med det samme
+    ui.renderFittingsResult();
+    if (window.recalculateSystem) window.recalculateSystem();
+
+    // --- BESKYTTELSE MOD TAB AF DATA ---
+    window.addEventListener('beforeunload', function (e) {
+        const sysComps = window.stateManager ? window.stateManager.getSystemComponents() : [];
+        const fitComps = window.stateManager ? window.stateManager.getFittings() : [];
+        
+        // Hvis der er bygget mere end 0 komponenter i mindst en af fanerne
+        if (sysComps.length > 0 || fitComps.length > 0) {
+            e.preventDefault();
+            e.returnValue = ''; // Standard måde at trigge browserens "Forlad site?" boks
+        }
+    });
 }
 
 window.loadSystem = (event) => {
