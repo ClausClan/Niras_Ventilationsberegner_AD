@@ -1,7 +1,6 @@
-const CACHE_NAME = 'ventcalc-adv-v2'; // Versionsnummer opdateret for at tvinge ny cache
+const CACHE_NAME = 'ventcalc-adv-v3'; // Versionsnummer opdateret
 
 // Basis-URL for GitHub Pages. 
-// VIGTIGT: Hvis du tester lokalt (f.eks. http://127.0.0.1:5500/), skal du evt. fjerne "/Niras_Ventilationsberegner_AD"
 const BASE_URL = '/Niras_Ventilationsberegner_AD';
 
 // Liste over filer der skal gemmes lokalt på enheden
@@ -46,7 +45,7 @@ self.addEventListener('install', (event) => {
     self.skipWaiting();
 });
 
-// Aktivering: Ryd op i gamle caches, hvis vi ændrer CACHE_NAME (f.eks. til v2)
+// Aktivering: Ryd op i gamle caches
 self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys().then((cacheNames) => {
@@ -63,16 +62,41 @@ self.addEventListener('activate', (event) => {
     self.clients.claim();
 });
 
-// Fetch: Forsøg at hente fra cache først. Findes filen ikke, hent den fra nettet.
+// Fetch: Stale-while-revalidate strategi (Kræves ofte for PWA godkendelse)
 self.addEventListener('fetch', (event) => {
+    // Vi cacher kun GET requests (ikke POST/PUT etc.)
+    if (event.request.method !== 'GET') return;
+
     event.respondWith(
-        caches.match(event.request).then((response) => {
-            // Returner den cachede version, hvis vi har den
-            if (response) {
-                return response;
+        caches.match(event.request).then((cachedResponse) => {
+            if (cachedResponse) {
+                // Returner fra cache, men opdater cachen i baggrunden (stale-while-revalidate)
+                fetch(event.request).then((networkResponse) => {
+                    if (networkResponse && networkResponse.status === 200) {
+                        caches.open(CACHE_NAME).then((cache) => {
+                            cache.put(event.request, networkResponse.clone());
+                        });
+                    }
+                }).catch(() => {
+                    // Ignorer netværksfejl her, vi har jo cachen
+                });
+                return cachedResponse;
             }
-            // Ellers send anmodningen videre til netværket (serveren)
-            return fetch(event.request);
+            
+            // Hvis filen slet ikke er i cache, hent fra nettet
+            return fetch(event.request).then((response) => {
+                // Cache den nye fil til næste gang, hvis det lykkes
+                if (response && response.status === 200 && response.type === 'basic') {
+                    const responseToCache = response.clone();
+                    caches.open(CACHE_NAME).then((cache) => {
+                        cache.put(event.request, responseToCache);
+                    });
+                }
+                return response;
+            }).catch(() => {
+                // Her kunne man evt. returnere en offline HTML side, hvis alt fejler
+                console.error('[Service Worker] Netværksfejl og fil ikke i cache:', event.request.url);
+            });
         })
     );
 });
