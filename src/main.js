@@ -1722,6 +1722,18 @@ async function initializeApp() {
     ui.updateUndoRedoUI(canUndo(), canRedo());
 
     // --- UDFORDRING 1: AUTO-LOAD (Mulighed B) ---
+    // Synkroniser UI felter med den netop indlæste state fra localStorage
+    const loadedState = stateManager.state;
+    if (loadedState) {
+        if (loadedState.projectName) document.getElementById('projectName').value = loadedState.projectName;
+        if (loadedState.startAirflow) document.getElementById('system_airflow').value = loadedState.startAirflow;
+        if (loadedState.temperature) document.getElementById('temperature').value = loadedState.temperature;
+        if (loadedState.systemType) {
+            const radio = document.querySelector(`input[name="systemFlowType"][value="${loadedState.systemType}"]`);
+            if (radio) radio.checked = true;
+        }
+    }
+
     // Sørger for at UI'et afspejler data hentet fra localStorage med det samme
     ui.renderFittingsResult();
     if (window.recalculateSystem) window.recalculateSystem();
