@@ -1811,11 +1811,15 @@ window.saveSystem = () => {
 
 document.addEventListener('DOMContentLoaded', initializeApp);
 
+// --- PWA Service Worker Registration ---
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then(function (registrations) {
-        for (let registration of registrations) {
-            registration.unregister();
-            console.log('Service Worker unregistered');
-        }
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/service-worker.js')
+            .then(registration => {
+                console.log('ServiceWorker registration successful with scope: ', registration.scope);
+            })
+            .catch(error => {
+                console.error('ServiceWorker registration failed: ', error);
+            });
     });
 }
