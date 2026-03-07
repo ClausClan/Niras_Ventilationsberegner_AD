@@ -1491,7 +1491,17 @@ async function initializeApp() {
     const sysInputs = ['system_airflow', 'temperature', 'ambient_temperature', 'humidity'];
     sysInputs.forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.addEventListener('change', window.recalculateSystem);
+        if (el) {
+            // Sørg for at ændringer i systemfelter gemmes i stateManager
+            el.addEventListener('change', (e) => {
+                if (id === 'system_airflow') {
+                    stateManager.setProjectParams({ startAirflow: e.target.value });
+                } else if (id === 'temperature') {
+                    stateManager.setProjectParams({ temperature: e.target.value });
+                }
+                window.recalculateSystem();
+            });
+        }
     });
 
     const flowRadios = document.querySelectorAll('input[name="systemFlowType"]');
@@ -1711,12 +1721,12 @@ async function initializeApp() {
 
     ui.updateUndoRedoUI(canUndo(), canRedo());
 
-    // --- AUTO-LOAD ---
+    // --- UDFORDRING 1: AUTO-LOAD (Mulighed B) ---
     // Sørger for at UI'et afspejler data hentet fra localStorage med det samme
     ui.renderFittingsResult();
     if (window.recalculateSystem) window.recalculateSystem();
 
-    // --- BESKYTTELSE MOD TAB AF DATA ---
+    // --- UDFORDRING 2: BESKYTTELSE MOD TAB AF DATA ---
     window.addEventListener('beforeunload', function (e) {
         const sysComps = window.stateManager ? window.stateManager.getSystemComponents() : [];
         const fitComps = window.stateManager ? window.stateManager.getFittings() : [];
