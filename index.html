@@ -4,11 +4,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ventilationsberegner (Modulær)</title>
+    <title>NIRAS VentilationsberegnerADV</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="./src/style.css">
+
+<!-- PWA Manifest -->
+    <link rel="manifest" href="/Niras_Ventilationsberegner_AD/manifest.json">
+    
+    <!-- Favicons -->
+    <link rel="icon" type="image/x-icon" href="/Niras_Ventilationsberegner_AD/favicon.ico">
+    <link rel="icon" type="image/png" sizes="32x32" href="/Niras_Ventilationsberegner_AD/favicon.png">
+    <link rel="apple-touch-icon" sizes="192x192" href="/Niras_Ventilationsberegner_AD/favicon-192.png">
+    
+    <!-- Android / Chrome -->
+    <meta name="theme-color" content="#ffffff"> <!-- Ret evt. til din primære app-farve -->
 
     <!-- Three.js and OrbitControls -->
     <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
@@ -42,7 +53,7 @@
                             </g>
                         </svg>
                     </div>
-                    <div class="logo-subtitle">Ventilationsberegner</div>
+                    <div class="logo-subtitle">VentCalculatorADV</div>
                 </div>
 
                 <div class="header-controls">
@@ -88,13 +99,13 @@
                 </div>
                 <div class="input-group" style="margin-bottom: 0;">
                     <div class="input-unit-wrapper" data-unit="°C">
-                        <label for="ambient_temperature">Omgivelsestemperatur (Standard)</label>
+                        <label for="ambient_temperature">Omgivelsestemperatur</label>
                         <input type="text" id="ambient_temperature" class="input-field" value="20">
                     </div>
                 </div>
                 <div class="input-group" style="margin-bottom: 0;">
                     <div class="input-unit-wrapper" data-unit="%">
-                        <label for="humidity">Relativ Luftfugtighed (RH)</label>
+                        <label for="humidity">%RH (Start)</label>
                         <input type="text" id="humidity" class="input-field" value="50">
                     </div>
                 </div>
@@ -145,6 +156,9 @@
                 <!-- Content injected by main.js -->
             </div>
         </div>
+        <footer class="app-footer">
+        <p>AppVersion 0.14.1beta --- Spørgsmål kontakt CWA@niras.dk</p>
+        </footer>
     </div>
 
     <!-- Modal for details -->

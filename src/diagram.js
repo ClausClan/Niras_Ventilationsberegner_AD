@@ -101,52 +101,57 @@ export function renderDiagram(keepControls = false) {
     const container = document.getElementById('systemDiagramContainer');
     if (!container) return;
 
-    // Helper for generating dynamic transition buffer geometry
-    function createTransitionGeometry(shape1, w1, h1, r1, shape2, w2, h2, r2, length) {
-        const segments = 16;
+    // --- LORTR / PIRAMIDESTUB GEOMETRI GENERATOR ---
+    function createTransitionGeometry(shape1, w1, h1, r1, shape2, w2, h2, r2, length_3d) {
+        const segments = 64; 
         const positions = [];
         const indices = [];
         const uvs = [];
 
-        function buildProfile(shape, w, h, r, yPos, vCoord) {
-            const p = [];
-            if (shape === 'round') {
-                for (let i = 0; i < segments; i++) {
-                    const a = (i / segments) * Math.PI * 2;
-                    p.push(new THREE.Vector3(Math.cos(a) * r, yPos, Math.sin(a) * r));
-                }
+        function getProfilePoint(shape, w, h, r, theta) {
+            if (shape === 'round' || shape === 'circular') {
+                return { x: r * Math.cos(theta), z: r * Math.sin(theta) };
             } else {
-                const hw = w / 2, hh = h / 2;
-                const corners = [
-                    new THREE.Vector3(hw, yPos, hh),
-                    new THREE.Vector3(-hw, yPos, hh),
-                    new THREE.Vector3(-hw, yPos, -hh),
-                    new THREE.Vector3(hw, yPos, -hh)
-                ];
-                for (let c = 0; c < 4; c++) {
-                    const start = corners[c];
-                    const end = corners[(c + 1) % 4];
-                    for (let i = 0; i < 4; i++) {
-                        p.push(start.clone().lerp(end, i / 4));
-                    }
-                }
+                const dx = Math.cos(theta);
+                const dz = Math.sin(theta);
+                const tx = Math.abs(dx) < 1e-6 ? Infinity : Math.abs((w / 2) / dx);
+                const tz = Math.abs(dz) < 1e-6 ? Infinity : Math.abs((h / 2) / dz);
+                const t = Math.min(tx, tz);
+                return { x: t * dx, z: t * dz };
             }
-            p.forEach((v, i) => {
-                positions.push(v.x, v.y, v.z);
-                uvs.push(i / segments, vCoord);
-            });
         }
 
-        buildProfile(shape1, w1, h1, r1, -length / 2, 0);
-        buildProfile(shape2, w2, h2, r2, length / 2, 1);
+        const halfL = length_3d / 2;
+        const collar_3d = 50 * (100 / 1000); 
+        const effective_collar = Math.min(collar_3d, length_3d / 3);
+        
+        const rings = [
+            { y: -halfL,                    shape: shape1, w: w1, h: h1, r: r1, v: 0 },
+            { y: -halfL + effective_collar, shape: shape1, w: w1, h: h1, r: r1, v: 0.2 },
+            { y: halfL - effective_collar,  shape: shape2, w: w2, h: h2, r: r2, v: 0.8 },
+            { y: halfL,                     shape: shape2, w: w2, h: h2, r: r2, v: 1 }
+        ];
 
-        for (let i = 0; i < segments; i++) {
-            const next_i = (i + 1) % segments;
-            const b1 = i, b2 = next_i;
-            const t1 = i + segments, t2 = next_i + segments;
+        rings.forEach((ring) => {
+            for (let i = 0; i <= segments; i++) {
+                const theta = (i / segments) * Math.PI * 2;
+                const pt = getProfilePoint(ring.shape, ring.w, ring.h, ring.r, theta);
+                positions.push(pt.x, ring.y, pt.z);
+                uvs.push(i / segments, ring.v);
+            }
+        });
 
-            indices.push(b1, t2, t1); // Note: orientation might be backwards dependent on view
-            indices.push(b1, b2, t2);
+        const vertsPerRing = segments + 1;
+        for (let r = 0; r < 3; r++) { 
+            for (let i = 0; i < segments; i++) {
+                const a = r * vertsPerRing + i;
+                const b = r * vertsPerRing + i + 1;
+                const c = (r + 1) * vertsPerRing + i;
+                const d = (r + 1) * vertsPerRing + i + 1;
+
+                indices.push(a, c, b);
+                indices.push(b, c, d);
+            }
         }
 
         const geom = new THREE.BufferGeometry();
@@ -158,7 +163,6 @@ export function renderDiagram(keepControls = false) {
         return geom;
     }
 
-    // Use full state to check systemType
     const fullState = window.stateManager ? window.stateManager.state : { systemComponents: [] };
     const components = fullState.systemComponents || getSystemComponents();
     const isExhaust = fullState.systemType === 'merging';
@@ -168,10 +172,8 @@ export function renderDiagram(keepControls = false) {
         return;
     }
 
-    // --- 1. Init Three.js Environment ---
     let webglContainer = document.getElementById('diagramWebglContainer');
 
-    // Inject HTML layout if first time
     if (!webglContainer || !renderer) {
         container.style.position = 'relative';
         container.innerHTML = `
@@ -191,7 +193,6 @@ export function renderDiagram(keepControls = false) {
                  </select>
             </div>
             <div id="diagramLegend" style="position:absolute; bottom:20px; left:20px; z-index:100; background:rgba(0,0,0,0.8); padding:10px; border-radius:8px; color:white; font-size: 0.8rem; display: none;">
-                <!-- Legend goes here -->
             </div>
             <div id="diagramWebglContainer" style="width:100%; height:100%; min-height: 500px; background:#111;"></div>
             <div id="diagramLabels" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:50;"></div>
@@ -211,16 +212,14 @@ export function renderDiagram(keepControls = false) {
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
-        controls.screenSpacePanning = true; // Use more intuitive screen-bound panning vs flat ground panning
+        controls.screenSpacePanning = true;
 
-        // Lights
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         scene.add(ambientLight);
         const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
         dirLight.position.set(1, 1, 1);
         scene.add(dirLight);
 
-        // Animation Loop
         const animate = function () {
             requestAnimationFrame(animate);
             controls.update();
@@ -229,7 +228,6 @@ export function renderDiagram(keepControls = false) {
         };
         animate();
 
-        // Resize handler
         window.addEventListener('resize', () => {
             if (webglContainer) {
                 camera.aspect = webglContainer.clientWidth / webglContainer.clientHeight;
@@ -239,11 +237,9 @@ export function renderDiagram(keepControls = false) {
         });
     }
 
-    // --- 2. Clear Scene & Data ---
-    // Remove old meshes
     for (let i = scene.children.length - 1; i >= 0; i--) {
         let obj = scene.children[i];
-        if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group") {
+        if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "ArrowHelper") {
             scene.remove(obj);
         }
     }
@@ -252,7 +248,6 @@ export function renderDiagram(keepControls = false) {
     labelsContainer.innerHTML = '';
     labelsMap.clear();
 
-    // Determine Min/Max
     let maxV = -Infinity, minV = Infinity, maxP = -Infinity, minP = Infinity, maxT = -Infinity, minT = Infinity;
     components.forEach(c => {
         let v = c.state?.velocity || 0;
@@ -270,7 +265,6 @@ export function renderDiagram(keepControls = false) {
     let currentMin = diagramSettings.colorMode === 'velocity' ? minV : (diagramSettings.colorMode === 'pressure' ? minP : minT);
     let currentMax = diagramSettings.colorMode === 'velocity' ? maxV : (diagramSettings.colorMode === 'pressure' ? maxP : maxT);
 
-    // Update Legend UI
     const legendContainer = document.getElementById('diagramLegend');
     if (legendContainer) {
         if (diagramSettings.colorMode === 'default') {
@@ -314,10 +308,8 @@ export function renderDiagram(keepControls = false) {
         }
     }
 
-    // --- 3. Recursive 3D Drawing ---
     const materialCache = {};
 
-    // Generate a 256x1 gradient texture
     const createGradientTexture = (colorHexStart, colorHexEnd) => {
         const canvas = document.createElement('canvas');
         canvas.width = 256;
@@ -335,11 +327,9 @@ export function renderDiagram(keepControls = false) {
 
     const getMaterial = (comp, isIncluded) => {
         const mode = diagramSettings.colorMode;
-
         let colorHexStart = 0x777777;
         let colorHexEnd = 0x777777;
         let useGradient = false;
-
         let isGhosted = !isIncluded;
 
         if (isIncluded) {
@@ -353,8 +343,6 @@ export function renderDiagram(keepControls = false) {
             if (mode === 'temperature' && comp.state?.temperature_in !== undefined) {
                 const tIn = comp.state.temperature_in;
                 const tOut = comp.state.temperature_out?.outlet || comp.state.temperature_out?.outlet_straight || tIn;
-
-                // Only create gradient if there is an actual temperature delta
                 if (Math.abs(tIn - tOut) > 0.01) {
                     colorHexStart = getColorByValue(tIn, mode, currentMin, currentMax);
                     colorHexEnd = getColorByValue(tOut, mode, currentMin, currentMax);
@@ -369,25 +357,22 @@ export function renderDiagram(keepControls = false) {
                 transparent: isGhosted,
                 opacity: isGhosted ? 0.5 : 1.0,
                 roughness: 0.3,
-                metalness: 0.1
+                metalness: 0.1,
+                side: THREE.DoubleSide
             };
 
             if (useGradient) {
                 matParams.map = createGradientTexture(colorHexStart, colorHexEnd);
-                matParams.color = 0xffffff; // White base so texture shows
+                matParams.color = 0xffffff;
             } else {
                 matParams.color = colorHexStart;
             }
-
             materialCache[key] = new THREE.MeshStandardMaterial(matParams);
         }
         return materialCache[key];
     };
 
-    let bendCounter = 0;
     const PIXELS_PER_METER = 100;
-
-    // Limits
     let bMin = new THREE.Vector3(Infinity, Infinity, Infinity);
     let bMax = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
 
@@ -395,32 +380,27 @@ export function renderDiagram(keepControls = false) {
         if (!comp) return;
 
         const isIncluded = comp.isIncluded !== false;
-        const colorHex = isIncluded ? getColor(comp, diagramSettings.colorMode, currentMin, currentMax) : 0x777777;
         const baseMaterial = getMaterial(comp, isIncluded);
 
-        // Clone material if we need a gradient so UV orientation doesn't break other geometries
         let material = baseMaterial;
         if (baseMaterial.map) {
             material = baseMaterial.clone();
             material.map = baseMaterial.map.clone();
             if (comp.type === 'straightDuct' || comp.type.includes('transition') || comp.type === 'expansion' || comp.type === 'contraction' || comp.type.includes('tee')) {
-                // Cylinders map UVs along Y (which we rotate to X/Z), so we rotate the texture 90deg
                 material.map.rotation = Math.PI / 2;
                 material.map.center.set(0.5, 0.5);
             } else if (comp.type.startsWith('bend')) {
-                // TubeGeometry maps U along the length, V around the circumference
                 material.map.rotation = 0;
             }
             material.map.needsUpdate = true;
         }
 
-        // Basic dimensions
         let isRect = false;
-        let diameterMm = 200; // default
+        let diameterMm = 200;
         let widthMm = 200;
         let heightMm = 200;
 
-        const dim = comp.state?.inletDimension || comp.state?.outletDimension?.outlet || comp.state?.outletDimension?.straight;
+        const dim = comp.state?.inletDimension || comp.state?.outletDimension?.outlet || comp.state?.outletDimension?.straight || comp.state?.outletDimension?.outlet_path1;
         if (dim) {
             if (dim.shape === 'rectangular' || dim.shape === 'rect') {
                 isRect = true;
@@ -435,25 +415,25 @@ export function renderDiagram(keepControls = false) {
         const width3D = (widthMm / 1000) * PIXELS_PER_METER;
         const height3D = (heightMm / 1000) * PIXELS_PER_METER;
 
-        let moveDist = 60; // default length
+        let moveDist = 60;
         let nextDir = currentDir.clone();
         let nextUp = upDir ? upDir.clone() : new THREE.Vector3(0, 1, 0);
         let nextPos = currentPos.clone();
-        let branchDir = null; // for T-pieces
+        let branchDir = null;
         let branchUp = null;
         let midWay = currentPos.clone();
 
-        // Component type logic
+        const pType = comp.fittingType || (comp.properties && comp.properties.type) || comp.type || '';
+
         if (comp.type === 'straightDuct') {
             const len_m = comp.properties?.length || 1;
             moveDist = (len_m * PIXELS_PER_METER);
 
             let geometry;
             if (isRect) {
-                // Box: width (X), length (Y), height (Z) in Three.js coordinates before rotation
                 geometry = new THREE.BoxGeometry(width3D, moveDist, height3D);
             } else {
-                geometry = new THREE.CylinderGeometry(radius3D, radius3D, moveDist, 16);
+                geometry = new THREE.CylinderGeometry(radius3D, radius3D, moveDist, 32);
             }
 
             geometry.translate(0, moveDist / 2, 0);
@@ -467,8 +447,7 @@ export function renderDiagram(keepControls = false) {
             nextPos.add(currentDir.clone().multiplyScalar(moveDist));
             midWay.copy(currentPos).add(currentDir.clone().multiplyScalar(moveDist / 2));
         }
-        else if (comp.type.startsWith('bend')) {
-            bendCounter++;
+        else if (pType.startsWith('bend')) {
             const angleDeg = comp.properties?.angle || 90;
             const turnRad = THREE.MathUtils.degToRad(angleDeg);
 
@@ -516,56 +495,67 @@ export function renderDiagram(keepControls = false) {
             scene.add(mesh);
 
             midWay.copy(curve.getPoint(0.5));
-            moveDist = cornerDist * 2; // For bounding box approximation
+            moveDist = cornerDist * 2;
         }
-        else if (comp.type.includes('transition') || comp.type === 'expansion' || comp.type === 'contraction') {
+        else if (pType.includes('transition') || pType.includes('expansion') || pType.includes('contraction')) {
             const dim1 = comp.state?.inletDimension;
             const dim2 = comp.state?.outletDimension?.outlet;
+            const p = comp.properties || {};
 
-            let w1 = 200, h1 = 200, r1 = 100, shape1 = 'round';
-            if (dim1) {
-                if (dim1.shape === 'rectangular' || dim1.shape === 'rect') {
-                    shape1 = 'rect';
-                    w1 = dim1.w || dim1.sideB || 200;
-                    h1 = dim1.h || dim1.sideA || 200;
-                    r1 = Math.max(w1, h1) / 2;
-                } else {
-                    r1 = (dim1.d || dim1.diameter || 200) / 2;
-                    w1 = r1 * 2;
-                    h1 = r1 * 2;
-                }
+            let shape1 = 'round', shape2 = 'round';
+            if (pType === 'transition_rect_round') { shape1 = 'rect'; shape2 = 'round'; }
+            else if (pType === 'transition_round_rect') { shape1 = 'round'; shape2 = 'rect'; }
+            else if (pType.includes('rect')) { shape1 = 'rect'; shape2 = 'rect'; }
+
+            if (comp.shape === 'rectangular' || comp.shape === 'rect') shape1 = 'rect';
+            else if (comp.shape === 'circular' || comp.shape === 'round') shape1 = 'round';
+            
+            if (comp.shapeOut === 'rectangular' || comp.shapeOut === 'rect') shape2 = 'rect';
+            else if (comp.shapeOut === 'circular' || comp.shapeOut === 'round') shape2 = 'round';
+
+            let w1 = 200, h1 = 200, r1 = 100;
+            let w2 = 200, h2 = 200, r2 = 100;
+
+            if (shape1 === 'rect') {
+                w1 = parseFloat(comp.width || p.w1 || (pType === 'transition_rect_round' ? p.w : null) || dim1?.w || dim1?.sideB || 200);
+                h1 = parseFloat(comp.height || p.h1 || (pType === 'transition_rect_round' ? p.h : null) || dim1?.h || dim1?.sideA || 200);
+                r1 = Math.max(w1, h1) / 2;
+            } else {
+                const d1 = parseFloat(comp.diameter || p.d1 || (pType === 'transition_round_rect' ? p.d : null) || dim1?.d || dim1?.diameter || 200);
+                r1 = d1 / 2;
+                w1 = d1; h1 = d1;
             }
 
-            let w2 = 200, h2 = 200, r2 = 100, shape2 = 'round';
-            if (dim2) {
-                if (dim2.shape === 'rectangular' || dim2.shape === 'rect') {
-                    shape2 = 'rect';
-                    w2 = dim2.w || dim2.sideB || 200;
-                    h2 = dim2.h || dim2.sideA || 200;
-                    r2 = Math.max(w2, h2) / 2;
-                } else {
-                    r2 = (dim2.d || dim2.diameter || 200) / 2;
-                    w2 = r2 * 2;
-                    h2 = r2 * 2;
-                }
+            if (shape2 === 'rect') {
+                w2 = parseFloat(comp.widthOut || p.w2 || (pType === 'transition_round_rect' ? p.w : null) || dim2?.w || dim2?.sideB || 200);
+                h2 = parseFloat(comp.heightOut || p.h2 || (pType === 'transition_round_rect' ? p.h : null) || dim2?.h || dim2?.sideA || 200);
+                r2 = Math.max(w2, h2) / 2;
+            } else {
+                const d2 = parseFloat(comp.diameterOut || p.d2 || (pType === 'transition_rect_round' ? p.d : null) || dim2?.d || dim2?.diameter || 200);
+                r2 = d2 / 2;
+                w2 = d2; h2 = d2;
             }
 
-            // Scale to 3D pixels
-            w1 = (w1 / 1000) * PIXELS_PER_METER; h1 = (h1 / 1000) * PIXELS_PER_METER; r1 = (r1 / 1000) * PIXELS_PER_METER;
-            w2 = (w2 / 1000) * PIXELS_PER_METER; h2 = (h2 / 1000) * PIXELS_PER_METER; r2 = (r2 / 1000) * PIXELS_PER_METER;
+            const sf_3d = PIXELS_PER_METER / 1000;
+            w1 *= sf_3d; h1 *= sf_3d; r1 *= sf_3d;
+            w2 *= sf_3d; h2 *= sf_3d; r2 *= sf_3d;
 
-            const angleDeg = comp.properties?.angle || 30;
+            const angleDeg = parseFloat(p.angle || 30);
             const deltaMax = Math.max(Math.abs(w1 - w2) / 2, Math.abs(h1 - h2) / 2, Math.abs(r1 - r2));
-            moveDist = (deltaMax / Math.tan(THREE.MathUtils.degToRad(angleDeg / 2))) || 40;
-            if (moveDist < 10) moveDist = 40;
+            
+            let l_calc_3d = 0;
+            if (angleDeg > 0) {
+                l_calc_3d = deltaMax / Math.tan(THREE.MathUtils.degToRad(angleDeg / 2));
+            }
+            
+            const total_length_mm = 100 + (l_calc_3d / sf_3d);
+            moveDist = total_length_mm * sf_3d;
 
             const geometry = createTransitionGeometry(shape1, w1, h1, r1, shape2, w2, h2, r2, moveDist);
-            // Center is Y=0, move bottom to 0
             geometry.translate(0, moveDist / 2, 0);
             geometry.rotateX(Math.PI / 2);
 
             const mesh = new THREE.Mesh(geometry, material);
-            mesh.material.side = THREE.DoubleSide; // To avoid culling if normals are inversed
             mesh.position.copy(currentPos);
             mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
             scene.add(mesh);
@@ -573,7 +563,9 @@ export function renderDiagram(keepControls = false) {
             nextPos.add(currentDir.clone().multiplyScalar(moveDist));
             midWay.copy(currentPos).add(currentDir.clone().multiplyScalar(moveDist / 2));
         }
-        else if (comp.type.includes('tee')) {
+        else if (pType.includes('tee')) {
+            const isBullhead = pType === 'tee_bullhead';
+            
             const orientation = comp.properties?.orientation || 'Left';
             const rightDir = currentDir.clone().cross(nextUp).normalize();
             let axis = nextUp.clone();
@@ -585,50 +577,150 @@ export function renderDiagram(keepControls = false) {
             else if (orientation === 'Down') { axis = rightDir.clone(); turnSign = -1; }
 
             const branchTurn = THREE.MathUtils.degToRad(90);
-            branchDir = currentDir.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
-            branchUp = nextUp.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
 
-            moveDist = Math.max(radius3D * 4, width3D * 2, 60);
-            const stubLen = moveDist / 2;
-            const branchRadius = ((comp.properties?.d_branch || diameterMm) / 1000) * PIXELS_PER_METER / 2;
-            const branchWidth = ((comp.properties?.w_branch || widthMm) / 1000) * PIXELS_PER_METER;
-            const branchHeight = ((comp.properties?.h_branch || heightMm) / 1000) * PIXELS_PER_METER;
-            const isBranchRect = comp.properties?.w_branch !== undefined || (isRect && comp.properties?.d_branch === undefined);
+            if (isBullhead) {
+                // --- BULLHEAD TEGNELOGIK ---
+                // For en bullhead går luften ind i midten og spreder sig 90 grader til hver side.
+                const dIn = (comp.properties?.d_in || diameterMm) / 1000 * PIXELS_PER_METER;
+                const dOut1 = (comp.properties?.d_out1 || diameterMm) / 1000 * PIXELS_PER_METER;
+                const dOut2 = (comp.properties?.d_out2 || diameterMm) / 1000 * PIXELS_PER_METER;
 
-            // Main stub
-            let gS;
-            if (isRect) {
-                gS = new THREE.BoxGeometry(width3D, moveDist, height3D);
+                moveDist = Math.max(dIn * 2, 60);
+                const stubLen = moveDist / 2;
+
+                // Indløbs-stub
+                let gIn = new THREE.CylinderGeometry(dIn/2, dIn/2, stubLen, 32);
+                gIn.translate(0, stubLen/2, 0);
+                gIn.rotateX(Math.PI/2);
+                const meshIn = new THREE.Mesh(gIn, material);
+                meshIn.position.copy(currentPos);
+                meshIn.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
+                scene.add(meshIn);
+
+                const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
+
+                // Path 1 (F.eks. Venstre)
+                const path1Dir = currentDir.clone().applyAxisAngle(axis, branchTurn).normalize();
+                const path1Up = nextUp.clone().applyAxisAngle(axis, branchTurn).normalize();
+                
+                // Path 2 (F.eks. Højre)
+                const path2Dir = currentDir.clone().applyAxisAngle(axis, -branchTurn).normalize();
+                const path2Up = nextUp.clone().applyAxisAngle(axis, -branchTurn).normalize();
+
+                // Branch 1 Stub
+                let gB1 = new THREE.CylinderGeometry(dOut1/2, dOut1/2, stubLen, 32);
+                gB1.translate(0, stubLen/2, 0);
+                gB1.rotateX(Math.PI/2);
+                const meshB1 = new THREE.Mesh(gB1, material);
+                meshB1.position.copy(midPos);
+                meshB1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path1Dir);
+                scene.add(meshB1);
+
+                // Branch 2 Stub
+                let gB2 = new THREE.CylinderGeometry(dOut2/2, dOut2/2, stubLen, 32);
+                gB2.translate(0, stubLen/2, 0);
+                gB2.rotateX(Math.PI/2);
+                const meshB2 = new THREE.Mesh(gB2, material);
+                meshB2.position.copy(midPos);
+                meshB2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path2Dir);
+                scene.add(meshB2);
+
+                midWay.copy(midPos);
+
+                const drawOpenEnd = (pos, dir, portName) => {
+                    const arrowLength = 50;
+                    const arrowDir = isExhaust ? dir.clone().negate() : dir;
+                    const arrowPos = isExhaust ? pos.clone().add(dir.clone().multiplyScalar(arrowLength)) : pos;
+
+                    const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowPos, arrowLength, 0x00E4FF, 15, 10);
+                    scene.add(arrowHelper);
+
+                    const outFlow = comp.state?.airflow_out?.[portName] || 0;
+                    const flow = Math.round(outFlow);
+                    
+                    const tOutRaw = comp.state?.temperature_out?.[portName] || comp.state?.temperature_in || 20;
+                    const temp = parseFloat(tOutRaw);
+                    const endText = isExhaust ? 'Udsugning' : 'Indblæsning';
+
+                    const div = document.createElement('div');
+                    div.className = 'diagram-label end-label';
+                    div.style.position = 'absolute';
+                    div.style.color = '#00E4FF';
+                    div.style.fontWeight = 'bold';
+                    div.style.background = 'rgba(0,0,0,0.6)';
+                    div.style.padding = '2px 6px';
+                    div.style.borderRadius = '4px';
+                    div.style.border = '1px solid #00E4FF';
+                    div.style.fontSize = '11px';
+                    div.style.pointerEvents = 'none';
+                    div.style.whiteSpace = 'pre';
+                    div.style.textAlign = 'center';
+                    div.innerText = `${endText}\n${flow} m³/h\n${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`;
+                    labelsContainer.appendChild(div);
+                    labelsMap.set(div, pos.clone().add(dir.clone().multiplyScalar(arrowLength + 15)));
+                };
+
+                // Tegn Børn på Gren 1
+                const end1Pos = midPos.clone().add(path1Dir.clone().multiplyScalar(stubLen));
+                const c1 = comp.children && comp.children.outlet_path1 && comp.children.outlet_path1[0];
+                if (c1) drawTree3D(c1, end1Pos, path1Dir, path1Up);
+                else drawOpenEnd(end1Pos, path1Dir, 'outlet_path1');
+
+                // Tegn Børn på Gren 2
+                const end2Pos = midPos.clone().add(path2Dir.clone().multiplyScalar(stubLen));
+                const c2 = comp.children && comp.children.outlet_path2 && comp.children.outlet_path2[0];
+                if (c2) drawTree3D(c2, end2Pos, path2Dir, path2Up);
+                else drawOpenEnd(end2Pos, path2Dir, 'outlet_path2');
+
+                // Returner tidligt fordi bullhead klarer sit eget recursive kald
+                drawLabels(comp, midWay, isIncluded);
+                bMin.min(currentPos); bMin.min(end1Pos); bMin.min(end2Pos);
+                bMax.max(currentPos); bMax.max(end1Pos); bMax.max(end2Pos);
+                return;
             } else {
-                gS = new THREE.CylinderGeometry(radius3D, radius3D, moveDist, 16);
-            }
-            gS.translate(0, moveDist / 2, 0);
-            gS.rotateX(Math.PI / 2);
-            const meshS = new THREE.Mesh(gS, material);
-            meshS.position.copy(currentPos);
-            meshS.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
-            scene.add(meshS);
+                // --- STANDARD T-STYKKE (Ligeud + 1 Afgrening) ---
+                branchDir = currentDir.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
+                branchUp = nextUp.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
 
-            // Branch stub
-            const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
-            let gB;
-            if (isBranchRect) {
-                gB = new THREE.BoxGeometry(branchWidth, stubLen, branchHeight);
-            } else {
-                gB = new THREE.CylinderGeometry(branchRadius, branchRadius, stubLen, 16);
-            }
-            gB.translate(0, stubLen / 2, 0);
-            gB.rotateX(Math.PI / 2);
-            const meshB = new THREE.Mesh(gB, material);
-            meshB.position.copy(midPos);
-            meshB.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), branchDir);
-            scene.add(meshB);
+                moveDist = Math.max(radius3D * 4, width3D * 2, 60);
+                const stubLen = moveDist / 2;
+                const branchRadius = ((comp.properties?.d_branch || diameterMm) / 1000) * PIXELS_PER_METER / 2;
+                const branchWidth = ((comp.properties?.w_branch || widthMm) / 1000) * PIXELS_PER_METER;
+                const branchHeight = ((comp.properties?.h_branch || heightMm) / 1000) * PIXELS_PER_METER;
+                const isBranchRect = comp.properties?.w_branch !== undefined || (isRect && comp.properties?.d_branch === undefined);
 
-            nextPos.add(currentDir.clone().multiplyScalar(moveDist));
-            midWay.copy(midPos);
+                let gS;
+                if (isRect) {
+                    gS = new THREE.BoxGeometry(width3D, moveDist, height3D);
+                } else {
+                    gS = new THREE.CylinderGeometry(radius3D, radius3D, moveDist, 32);
+                }
+                gS.translate(0, moveDist / 2, 0);
+                gS.rotateX(Math.PI / 2);
+                const meshS = new THREE.Mesh(gS, material);
+                meshS.position.copy(currentPos);
+                meshS.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
+                scene.add(meshS);
+
+                const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
+                let gB;
+                if (isBranchRect) {
+                    gB = new THREE.BoxGeometry(branchWidth, stubLen, branchHeight);
+                } else {
+                    gB = new THREE.CylinderGeometry(branchRadius, branchRadius, stubLen, 32);
+                }
+                gB.translate(0, stubLen / 2, 0);
+                gB.rotateX(Math.PI / 2);
+                const meshB = new THREE.Mesh(gB, material);
+                meshB.position.copy(midPos);
+                meshB.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), branchDir);
+                scene.add(meshB);
+
+                nextPos.add(currentDir.clone().multiplyScalar(moveDist));
+                midWay.copy(midPos);
+            }
         }
         else {
-            // Default generic box
             moveDist = Math.max(radius3D * 2, 40);
             const g = new THREE.BoxGeometry(radius3D * 2, radius3D * 2, moveDist);
             g.translate(0, 0, moveDist / 2);
@@ -641,101 +733,115 @@ export function renderDiagram(keepControls = false) {
             midWay.copy(currentPos).add(currentDir.clone().multiplyScalar(moveDist / 2));
         }
 
-        // --- Positions & Labels ---
-        if (diagramSettings.labelMode !== 'none') {
-            let txt = comp.name.split(' ')[0];
-            if (diagramSettings.labelMode === 'detailed') {
-                const press = Math.round(comp.state?.pressureLoss || 0);
-                const vel = (comp.state?.velocity || 0).toFixed(1);
-                const flow = Math.round(comp.state?.airflow_in || 0);
-                txt += ` (${flow}m³/h, ${vel}m/s, ${press}Pa)`;
-            }
-            if (!isIncluded) txt += " (Deaktiveret)";
+        // --- Positions & Labels Funktion ---
+        function drawLabels(compData, labelPosCenter, isIncl) {
+            if (diagramSettings.labelMode !== 'none') {
+                let txt = compData.name.split(' ')[0];
+                if (diagramSettings.labelMode === 'detailed') {
+                    const press = Math.round(compData.state?.pressureLoss || 0);
+                    const vel = (compData.state?.velocity || 0).toFixed(1);
+                    const flow = Math.round(compData.state?.airflow_in || 0);
+                    txt += ` (${flow}m³/h, ${vel}m/s, ${press}Pa)`;
+                }
+                if (!isIncl) txt += " (Deaktiveret)";
 
-            const div = document.createElement('div');
-            div.className = 'diagram-label';
-            div.style.position = 'absolute';
-            div.style.color = '#fff';
-            div.style.textShadow = '0 0 3px #000';
-            div.style.fontSize = '11px';
-            div.style.pointerEvents = 'none';
-            div.innerText = txt;
-            labelsContainer.appendChild(div);
-            labelsMap.set(div, midWay); // Save 3D pos
+                const div = document.createElement('div');
+                div.className = 'diagram-label';
+                div.style.position = 'absolute';
+                div.style.color = '#fff';
+                div.style.textShadow = '0 0 3px #000';
+                div.style.fontSize = '11px';
+                div.style.pointerEvents = 'none';
+                div.innerText = txt;
+                labelsContainer.appendChild(div);
+                labelsMap.set(div, labelPosCenter);
+            }
         }
 
-        // Bounding Box Logic
-        bMin.min(currentPos); bMin.min(nextPos);
-        bMax.max(currentPos); bMax.max(nextPos);
+        // Tegn standard labels for alle komponenter udover Bullhead (som håndteres oppe i sin egen if-blok)
+        if (pType !== 'tee_bullhead') {
+            drawLabels(comp, midWay, isIncluded);
+            bMin.min(currentPos); bMin.min(nextPos);
+            bMax.max(currentPos); bMax.max(nextPos);
 
-        const drawOpenEnd = (pos, dir) => {
-            const arrowLength = 50;
-            const arrowDir = isExhaust ? dir.clone().negate() : dir;
-            // Shift arrow position slightly if pulling inwards so it doesn't clip into the tube
-            const arrowPos = isExhaust ? pos.clone().add(dir.clone().multiplyScalar(arrowLength)) : pos;
+            const drawOpenEnd = (pos, dir, portName = null) => {
+                const arrowLength = 50;
+                const arrowDir = isExhaust ? dir.clone().negate() : dir;
+                const arrowPos = isExhaust ? pos.clone().add(dir.clone().multiplyScalar(arrowLength)) : pos;
 
-            const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowPos, arrowLength, 0x00E4FF, 15, 10);
-            scene.add(arrowHelper);
+                const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowPos, arrowLength, 0x00E4FF, 15, 10);
+                scene.add(arrowHelper);
 
-            const outFlow = comp.state?.airflow_out?.outlet || comp.state?.airflow_out?.outlet_straight || comp.state?.airflow_out?.outlet_branch || comp.state?.airflow_in || 0;
-            const flow = Math.round(outFlow);
-            const temp = comp.state?.temperature_out?.outlet || comp.state?.temperature_out?.outlet_straight || comp.state?.temperature_in || 20;
-            const endText = isExhaust ? 'Udsugning' : 'Indblæsning';
+                let outFlow = 0;
+                if (portName && comp.state?.airflow_out) {
+                    outFlow = comp.state.airflow_out[portName];
+                } else {
+                    outFlow = comp.state?.airflow_out?.outlet || comp.state?.airflow_out?.outlet_straight || comp.state?.airflow_out?.outlet_branch || comp.state?.airflow_in || 0;
+                }
 
-            const div = document.createElement('div');
-            div.className = 'diagram-label end-label';
-            div.style.position = 'absolute';
-            div.style.color = '#00E4FF';
-            div.style.fontWeight = 'bold';
-            div.style.background = 'rgba(0,0,0,0.6)';
-            div.style.padding = '2px 6px';
-            div.style.borderRadius = '4px';
-            div.style.border = '1px solid #00E4FF';
-            div.style.fontSize = '11px';
-            div.style.pointerEvents = 'none';
-            div.style.whiteSpace = 'pre';
-            div.style.textAlign = 'center';
-            div.innerText = `${endText} \n${flow} m³/h\n${temp.toFixed(1)} °C`;
-            labelsContainer.appendChild(div);
-            labelsMap.set(div, pos.clone().add(dir.clone().multiplyScalar(arrowLength + 15)));
-        };
+                const flow = Math.round(outFlow);
 
-        // --- Recurse ---
-        if (comp.type.includes('tee')) {
-            const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(moveDist / 2));
-            const branchStart = midPos.clone().add(branchDir.clone().multiplyScalar(moveDist / 2));
+                let tOutRaw = 20;
+                if (portName && comp.state?.temperature_out) {
+                    tOutRaw = comp.state.temperature_out[portName];
+                } else {
+                    tOutRaw = comp.state?.temperature_out?.outlet || comp.state?.temperature_out?.outlet_straight || comp.state?.temperature_in || 20;
+                }
+                const temp = parseFloat(tOutRaw);
 
-            // Straight
-            const sc = comp.children && ((comp.children.outlet_straight && comp.children.outlet_straight[0]) || (comp.children.outlet_path1 && comp.children.outlet_path1[0]));
-            if (sc) drawTree3D(sc, nextPos, nextDir, nextUp);
-            else drawOpenEnd(nextPos, nextDir);
+                const endText = isExhaust ? 'Udsugning' : 'Indblæsning';
 
-            // Branch
-            const bc = comp.children && ((comp.children.outlet_branch && comp.children.outlet_branch[0]) || (comp.children.outlet_path2 && comp.children.outlet_path2[0]));
-            if (bc) drawTree3D(bc, branchStart, branchDir, branchUp);
-            else drawOpenEnd(branchStart, branchDir);
-        } else {
-            const c = comp.children && comp.children.outlet && comp.children.outlet[0];
-            if (c) drawTree3D(c, nextPos, nextDir, nextUp);
-            else drawOpenEnd(nextPos, nextDir);
+                const div = document.createElement('div');
+                div.className = 'diagram-label end-label';
+                div.style.position = 'absolute';
+                div.style.color = '#00E4FF';
+                div.style.fontWeight = 'bold';
+                div.style.background = 'rgba(0,0,0,0.6)';
+                div.style.padding = '2px 6px';
+                div.style.borderRadius = '4px';
+                div.style.border = '1px solid #00E4FF';
+                div.style.fontSize = '11px';
+                div.style.pointerEvents = 'none';
+                div.style.whiteSpace = 'pre';
+                div.style.textAlign = 'center';
+                div.innerText = `${endText}\n${flow} m³/h\n${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`;
+                labelsContainer.appendChild(div);
+                labelsMap.set(div, pos.clone().add(dir.clone().multiplyScalar(arrowLength + 15)));
+            };
+
+            if (pType.includes('tee')) {
+                const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(moveDist / 2));
+                const branchStart = midPos.clone().add(branchDir.clone().multiplyScalar(moveDist / 2));
+
+                const sc = comp.children && comp.children.outlet_straight && comp.children.outlet_straight[0];
+                if (sc) drawTree3D(sc, nextPos, nextDir, nextUp);
+                else drawOpenEnd(nextPos, nextDir, 'outlet_straight');
+
+                const bc = comp.children && comp.children.outlet_branch && comp.children.outlet_branch[0];
+                if (bc) drawTree3D(bc, branchStart, branchDir, branchUp);
+                else drawOpenEnd(branchStart, branchDir, 'outlet_branch');
+            } else {
+                const c = comp.children && comp.children.outlet && comp.children.outlet[0];
+                if (c) drawTree3D(c, nextPos, nextDir, nextUp);
+                else drawOpenEnd(nextPos, nextDir);
+            }
         }
     }
 
-    // Start drawing
-    const systemTree = window.stateManager ? window.stateManager.getSystemTree() : [];
-    if (systemTree.length > 0) {
+    const tree = stateManager.getSystemTree();
+    if (tree && tree.length > 0) {
         const startPos = new THREE.Vector3(0, 0, 0);
         const startDir = new THREE.Vector3(1, 0, 0);
         const startUp = new THREE.Vector3(0, 1, 0);
 
-        // Draw initial inlet arrow
         const arrowDir = isExhaust ? startDir.clone().negate() : startDir;
         const arrowStartPos = isExhaust ? new THREE.Vector3(0, 0, 0) : new THREE.Vector3(-60, 0, 0);
         const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowStartPos, 60, 0x00E4FF, 15, 10);
         scene.add(arrowHelper);
 
-        const flow = Math.round(systemTree[0].state?.airflow_in || 0);
-        const temp = systemTree[0].state?.temperature_in || 20;
+        const flow = Math.round(tree[0].state?.airflow_in || 0);
+        const tInRaw = tree[0].state?.temperature_in || 20;
+        const temp = parseFloat(tInRaw);
         const startText = isExhaust ? 'Udsugning' : 'Indtag';
 
         const div = document.createElement('div');
@@ -751,17 +857,15 @@ export function renderDiagram(keepControls = false) {
         div.style.pointerEvents = 'none';
         div.style.whiteSpace = 'pre';
         div.style.textAlign = 'center';
-        div.innerText = `${startText}\n${flow} m³/h\n${temp.toFixed(1)} °C`;
+        div.innerText = `${startText}\n${flow} m³/h\n${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`;
         labelsContainer.appendChild(div);
 
-        // Position label slightly further out
         const labelPos = isExhaust ? new THREE.Vector3(75, 0, 0) : new THREE.Vector3(-75, 0, 0);
         labelsMap.set(div, labelPos);
 
-        drawTree3D(systemTree[0], startPos, startDir, startUp);
+        drawTree3D(tree[0], startPos, startDir, startUp);
     }
 
-    // --- 4. Camera Auto-Fit ---
     if (!keepControls) {
         if (bMin.x !== Infinity) {
             const center = bMin.clone().add(bMax).multiplyScalar(0.5);
@@ -775,7 +879,6 @@ export function renderDiagram(keepControls = false) {
     }
 }
 
-// Attach label updater to animation loop
 function updateLabels() {
     if (!camera || !renderer) return;
     const canvas = renderer.domElement;
@@ -786,7 +889,6 @@ function updateLabels() {
         const v = pos3D.clone();
         v.project(camera);
 
-        // Frustum culling (hide if behind camera)
         if (v.z > 1) {
             element.style.display = 'none';
             return;
@@ -798,18 +900,14 @@ function updateLabels() {
 
         element.style.left = `${x}px`;
         element.style.top = `${y}px`;
-        element.style.transform = `translate(-50%, -100%)`; // above line
+        element.style.transform = `translate(-50%, -100%)`;
     });
 }
 
-// --- Interaction ---
 export function zoomAllDiagram() {
     if (!camera || !controls || !scene) return;
 
-    // Create an empty bounding box
     const box = new THREE.Box3();
-
-    // Expand bounding box to include all meshes in the scene
     scene.traverse((child) => {
         if (child.isMesh) {
             box.expandByObject(child);
@@ -820,13 +918,11 @@ export function zoomAllDiagram() {
 
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z, 20); // enforce a minimum zoom distance
+    const maxDim = Math.max(size.x, size.y, size.z, 20); 
 
-    // Zoom out using a multiplier
     const fov = camera.fov * (Math.PI / 180);
     let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
 
-    // Apply an isometric-like angle offset
     camera.position.set(center.x + cameraZ * 0.8, center.y + cameraZ * 1.0, center.z + cameraZ * 0.8);
     controls.target.copy(center);
 

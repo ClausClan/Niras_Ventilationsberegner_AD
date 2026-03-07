@@ -4,6 +4,7 @@ const STORAGE_KEY = 'niras_vent_current_project';
 
 class StateManager {
     constructor() {
+        this.historyPaused = false; // NYT: Lås der forhindrer spam i historikken
         this.resetState();
         this.history = [];
         this.future = [];
@@ -12,6 +13,10 @@ class StateManager {
         // Try to load from local storage on init
         this.loadFromStorage();
     }
+
+    // NYT: Funktioner til at styre historik-låsen
+    pauseHistory() { this.historyPaused = true; }
+    resumeHistory() { this.historyPaused = false; }
 
     resetState() {
         this.state = {
@@ -51,6 +56,8 @@ class StateManager {
     // --- History Management ---
 
     saveState(actionDescription = 'State Change') {
+        if (this.historyPaused) return; // NYT: Afviser snapshots, hvis vi er midt i en beregnings-loop!
+
         const stateClone = JSON.parse(JSON.stringify(this.state));
         this.history.push({ state: stateClone, description: actionDescription });
         if (this.history.length > this.maxHistory) this.history.shift();
@@ -436,3 +443,6 @@ export const redo = () => stateManager.redo();
 export const canUndo = () => stateManager.history.length > 0;
 export const canRedo = () => stateManager.future.length > 0;
 
+// NYT: Eksportér funktionerne til hovedfilen
+export const pauseHistory = () => stateManager.pauseHistory();
+export const resumeHistory = () => stateManager.resumeHistory();
