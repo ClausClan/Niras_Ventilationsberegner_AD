@@ -4,7 +4,7 @@
  */
 
 export function initDesktopMode() {
-    // 1. Injicer Desktop Mode CSS dynamisk (Kun Glow-effekten, resten er i style.css)
+    // 1. Injicer Desktop Mode CSS dynamisk (Glow-effekt og Skalering)
     const style = document.createElement('style');
     style.innerHTML = `
         /* Easter Egg Glow Effect */
@@ -17,6 +17,23 @@ export function initDesktopMode() {
             color: #00ff88;
             text-shadow: 0 0 10px #00ff88, 0 0 20px #00ff88;
             transform: scale(1.05);
+        }
+
+        /* --- SKALERING TIL STORE SKÆRME --- */
+        @media (min-width: 1024px) {
+            body.desktop-mode {
+                zoom: 0.75; /* Skalerer hele appen ned til 75% for et bedre desktop-overblik */
+            }
+            
+            /* Fallback til ældre Firefox versioner, der ikke understøtter 'zoom' fuldt ud */
+            @-moz-document url-prefix() {
+                body.desktop-mode {
+                    transform: scale(0.75);
+                    transform-origin: top left;
+                    width: 133.33vw !important; /* Kompenser for skaleringen, så den stadig fylder skærmen */
+                    height: 133.33vh !important;
+                }
+            }
         }
     `;
     document.head.appendChild(style);
@@ -64,7 +81,7 @@ function toggleDesktopMode() {
         
         setTimeout(() => {
             if (window.renderDiagram) window.renderDiagram(true); // true = behold kameravinkel
-            window.dispatchEvent(new Event('resize')); // Opdater Three.js canvas
+            window.dispatchEvent(new Event('resize')); // Opdater Three.js canvas så det passer til det nye plads/zoom
         }, 50);
 
     } else {
