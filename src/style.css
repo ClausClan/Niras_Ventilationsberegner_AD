@@ -1118,115 +1118,126 @@
             font-style: italic;
         }
 
-        /* --- DESKTOP MODE OVERRIDES --- */
-        body.desktop-mode {
-            padding: 0 !important;
-            margin: 0 !important;
-            overflow: hidden !important;
-            justify-content: flex-start !important; /* Løser overlapningen: Tvinger appen over til venstre! */
-        }
+/* ==========================================================================
+   DESKTOP MODE (Easter Egg / Pro View)
+   ========================================================================== */
 
-        /* Containeren fylder nu HELE skærmen i stedet for 1000px */
-        body.desktop-mode .container {
-            width: 100% !important;
-            max-width: 100% !important;
-            min-width: 100% !important;
-            height: 100vh !important;
-            margin: 0 !important;
-            padding: 20px !important;
-            display: flex !important;
-            flex-direction: column !important;
-            box-sizing: border-box !important;
-        }
+/* Easter Egg Glow Effect på logo */
+.adv-easter-egg {
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: inline-block;
+}
+.adv-easter-egg.active-glow {
+    color: #00ff88;
+    text-shadow: 0 0 10px #00ff88, 0 0 20px #00ff88;
+    transform: scale(1.05);
+}
 
-        /* Begræns bredden af top-elementerne til de ønskede 1000px */
-        body.desktop-mode .header,
-        body.desktop-mode .global-settings {
-            width: 100% !important;
-            max-width: 950px !important;
-        }
-
-        /* Kassen bliver en beholder for BÅDE UI og 3D Diagram */
-        body.desktop-mode .calculator-container {
-            flex-grow: 1 !important;
-            display: flex !important;
-            flex-direction: column !important;
-            height: auto !important;
-            position: relative !important;
-            overflow: hidden !important; /* Klipper hjørnerne pænt på hele split-skærmen */
-        }
-
-        /* Lås selve "mobil-delen" (faner + indhold) til venstre med 1000px bredde */
-        body.desktop-mode .tab-nav,
-        body.desktop-mode .tab-content {
-            width: 1000px !important;
-            max-width: 1000px !important;
-            box-sizing: border-box !important;
-        }
-
-        /* Gør at tabellen kan scrolle uden at rykke på rammen */
-        body.desktop-mode .tab-content {
-            flex-grow: 1 !important;
-            overflow-y: auto !important;
-            padding: 20px;
-        }
-
-        /* Fjern det gamle split-layout wrapper, da absolut positionering klarer det */
-        body.desktop-mode #systemSectionWrapper {
-            display: block !important;
-            padding: 0 !important;
-            height: 100% !important;
-        }
-
-        body.desktop-mode #systemLeftPane {
-            width: 100% !important;
-            padding-right: 0 !important;
-        }
-
-        /* Placér 3D Diagrammet INDENI den afrundede kasse, skubbet 1000px mod højre */
-        body.desktop-mode #systemRightPane {
-            position: absolute !important;
-            top: 0 !important;
-            bottom: 0 !important;
-            left: 1000px !important; /* Starter præcis hvor venstre panel slutter */
-            right: 0 !important;
-            display: block !important;
-            border: none !important;
-            border-left: 1px solid var(--border-color) !important; /* Adskiller tabellen fra diagrammet */
-            background-color: var(--input-bg-color) !important;
-            border-radius: 0 !important; /* Den ydre container (calculator-container) styrer den runde kant */
-            z-index: 100 !important;
-            box-shadow: none !important; /* Fjernet, da den ydre container har skyggen */
-        }
-
-        html[data-theme="dark"] body.desktop-mode #systemRightPane {
-            box-shadow: none !important;
-            border-color: var(--border-color) !important;
-        }
-
-        body.desktop-mode #systemDiagramContainer {
-            height: 100% !important;
-            width: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            border: none !important;
-            border-radius: 0 !important;
-        }
-
-        /* Skjul "Vis Diagram" knappen på mobil-layoutet i desktop mode */
-        body.desktop-mode #toggleViewBtn {
-            display: none !important;
-        }
-
-        /* --- MAGIC TRICK: Hold 3D diagrammet synligt selvom man skifter fane! --- */
-        body.desktop-mode #system.hidden {
-            display: block !important;
-            height: 0 !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            overflow: visible !important; /* Vigtigt: Gør at diagrammet (som er absolute) stadig tegnes */
-        }
+/* --- DESKTOP MODE (75% Ekte Zoom) --- */
+@media (min-width: 1024px) {
+    body.desktop-mode {
+        padding: 0 !important;
+        margin: 0 !important;
+        overflow: hidden !important;
+        background-color: var(--content-bg-color) !important;
         
-        body.desktop-mode #system.hidden #systemLeftPane {
-            display: none !important; /* Skjul kun tabellen, når vi skifter fane */
-        }
+        /* Ekte browser-skalering */
+        zoom: 0.75; 
+        
+        /* Fordi vi zoomer innholdet ned til 75%, må 'lerretet' være 
+           tilsvarende større (1 / 0.75 = 1.3333) for å fylle hele skjermen */
+        width: 133.33vw !important;
+        height: 133.33vh !important;
+    }
+
+    /* Container fyller nå det forstørrede lerretet */
+    body.desktop-mode .container {
+        width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+
+    body.desktop-mode .calculator-container {
+        flex-grow: 1 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        height: auto !important;
+        position: relative !important;
+        border: none !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+    }
+
+    /* Venstre panel låses til 1000px (tilsvarer 750px visuelt pga. zoom) */
+    body.desktop-mode .header,
+    body.desktop-mode .global-settings,
+    body.desktop-mode .tab-nav,
+    body.desktop-mode .tab-content {
+        width: 1000px !important;
+        max-width: 1000px !important;
+        box-sizing: border-box !important;
+    }
+
+    body.desktop-mode .tab-content {
+        flex-grow: 1 !important;
+        overflow-y: auto !important;
+        padding: 20px;
+    }
+
+    body.desktop-mode #systemSectionWrapper {
+        display: block !important;
+        padding: 0 !important;
+        height: 100% !important;
+    }
+
+    body.desktop-mode #systemLeftPane {
+        width: 100% !important;
+        padding-right: 0 !important;
+    }
+
+    /* Høyre panel (3D Diagram) får resten av plassen utenfor 1000px */
+    body.desktop-mode #systemRightPane {
+        position: absolute !important;
+        top: 0 !important;
+        bottom: 0 !important;
+        left: 1000px !important; /* Starter presis der venstre panel slutter */
+        right: 0 !important;
+        display: block !important;
+        border: none !important;
+        border-left: 1px solid var(--border-color) !important;
+        background-color: var(--input-bg-color) !important;
+        border-radius: 0 !important;
+        z-index: 100 !important;
+    }
+
+    body.desktop-mode #systemDiagramContainer {
+        height: 100% !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: none !important;
+        border-radius: 0 !important;
+    }
+
+    body.desktop-mode #toggleViewBtn {
+        display: none !important;
+    }
+
+    /* Holder 3D diagrammet synlig selv om man bytter fane! */
+    body.desktop-mode #system.hidden {
+        display: block !important;
+        height: 0 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        overflow: visible !important;
+    }
+    
+    body.desktop-mode #system.hidden #systemLeftPane {
+        display: none !important;
+    }
+}
