@@ -13,6 +13,10 @@ window.stateManager = stateManager;
 window.setCorrectionTargetId = setCorrectionTargetId;
 import { projectManager } from './projects.js';
 import { toggleDiagramView, renderDiagram } from './diagram.js';
+import { initDesktopMode } from './desktop_ui.js';
+
+// Initialiser Easter Egg for Desktop Mode (sætter CSS og lyttter op)
+initDesktopMode();
 
 window.toggleDiagramView = toggleDiagramView;
 window.renderDiagram = renderDiagram;
@@ -1814,7 +1818,7 @@ document.addEventListener('DOMContentLoaded', initializeApp);
 // --- PWA Service Worker Registration ---
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/Niras_Ventilationsberegner_AD/service-worker.js')
+        navigator.serviceWorker.register('/service-worker.js')
             .then(registration => {
                 console.log('ServiceWorker registration successful with scope: ', registration.scope);
             })
