@@ -265,8 +265,8 @@ export function renderDiagram(keepControls = false) {
             }
         });
 
-        // --- RAYCASTER TIL KLIK PÅ 3D MODEL ---
-        const canvas = renderer.domElement; // Lytter direkte på WebGL lærredet!
+        // --- RAYCASTER EVENT LISTENERS MED SLADREHANK ---
+        const canvas = renderer.domElement; 
         let pointerDownPos = { x: 0, y: 0 };
         let isDragging = false;
 
@@ -282,8 +282,14 @@ export function renderDiagram(keepControls = false) {
             if (dx > 5 || dy > 5) isDragging = true; // Beskytter mod at forveksle kameradrej med klik
         });
         
+        // Fanger både Venstre (0) og Højre (2) klik præcist her!
         canvas.addEventListener('pointerup', (e) => {
-            if (isDragging) return; 
+            if (isDragging) {
+                console.log("🖱️ [Raycaster] Ignorerede klik (brugeren trækker i kameraet).");
+                return; 
+            }
+
+            console.log(`🖱️ [Raycaster] Klik registreret. Knap: ${e.button === 0 ? 'Venstre' : (e.button === 2 ? 'Højre' : e.button)}`);
 
             const rect = canvas.getBoundingClientRect();
             const mouse = new THREE.Vector2();
@@ -295,15 +301,128 @@ export function renderDiagram(keepControls = false) {
 
             // Tjek kun mod objekter vi har markeret som interaktive meshes
             const intersects = raycaster.intersectObjects(scene.children, true);
+            console.log(`🎯 [Raycaster] Strålen traf ${intersects.length} objekt(er).`);
+
+            let ramteGyldigtObjekt = false;
+
             for (let i = 0; i < intersects.length; i++) {
                 const obj = intersects[i].object;
                 if (obj.userData && obj.userData.compId != null) {
-                    if (window.highlightTableRow) {
-                        window.highlightTableRow(String(obj.userData.compId)); // Fikser Type mismatch her også
+                    ramteGyldigtObjekt = true;
+                    const compId = String(obj.userData.compId);
+                    console.log(`✅ [Raycaster] Fandt komponent ID: ${compId}`);
+                    
+                    if (e.button === 0) {
+                        // VENSTREKLIK -> Highlight og scroll rækken i tabellen
+                        if (window.highlightTableRow) {
+                            window.highlightTableRow(compId); 
+                        }
+                    } else if (e.button === 2) {
+                        // HØJREKLIK -> Vis HUD Hologram Menu
+                        console.log(`🚀 [HUD] Bygger menu for: ${compId}`);
+                        
+                        // Ekstra liret effekt: Lys røret op og rul tabellen ned, når du højreklikker!
+                        if (window.highlightTableRow) window.highlightTableRow(compId);
+                        if (window.highlight3DComponent) window.highlight3DComponent(compId);
+
+                        // 1. Byg HUD Menuen dynamisk!
+                        let hudMenu = document.getElementById('hudContextMenu');
+                        if (hudMenu) hudMenu.remove(); // Slet eksisterende
+
+                        hudMenu = document.createElement('div');
+                        hudMenu.id = 'hudContextMenu';
+                        hudMenu.className = 'hud-context-menu'; // Bruger klassen fra din style.css
+                        
+                        // Hent komponent data via App State
+                        const comp = window.stateManager ? window.stateManager.getSystemComponent(compId) : { name: "Ukendt", state: {} };
+                        const velocity = comp.state?.velocity ? comp.state.velocity.toFixed(2) : '-';
+                        const pressure = comp.state?.pressureLoss ? comp.state.pressureLoss.toFixed(2) : '-';
+                        const airflow = comp.state?.airflow_in || comp.airflow || 0;
+                        const shortId = compId.split('_')[1] || compId.substring(0,4);
+
+                        // Byg Split-knappen (Kun hvis det er en lige kanal)
+                        const splitBtnHtml = comp.type === 'straightDuct' 
+                            ? `<button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="console.log('Split funktionalitet kommer senere...'); document.getElementById('hudContextMenu').remove();">
+                                   <span>✂️</span> Split kanal
+                               </button>`
+                            : '';
+                            
+                        // Tjek om det er en lige kanal, og tilføj ekstra data-rækker
+                        let extraDataHtml = '';
+                        if (comp.type === 'straightDuct') {
+                            const length = comp.properties?.length ? parseFloat(comp.properties.length).toFixed(2) : '-';
+                            const dpPerMeter = comp.state?.calculationDetails?.pressureDrop ? comp.state.calculationDetails.pressureDrop.toFixed(2) : '-';
+                            
+                            extraDataHtml = `
+                                <div>Længde:</div> <span>${length} m</span>
+                                <div>Tryktab:</div> <span>${dpPerMeter} Pa/m</span>
+                            `;
+                        }
+
+                        // Stramt, kompakt design via inline overrides
+                        hudMenu.innerHTML = `
+                            <div class="hud-header" style="font-size: 0.95rem; padding-bottom: 5px; margin-bottom: 5px;">
+                                <strong>${comp.name}</strong>
+                                <span class="hud-id" style="font-size: 0.7rem;">#${shortId}</span>
+                            </div>
+                            <div class="hud-data" style="font-size: 0.8rem; margin-bottom: 8px;">
+                                <div>Flow:</div> <span>${Math.round(airflow)} m³/h</span>
+                                <div>Hast.:</div> <span>${velocity} m/s</span>
+                                ${extraDataHtml}
+                                <div>Total Tab:</div> <span>${pressure} Pa</span>
+                            </div>
+                            <div class="hud-actions" style="gap: 4px;">
+                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.showSystemComponentDetails('${compId}'); document.getElementById('hudContextMenu').remove();">
+                                    <span>ℹ️</span> Detaljer
+                                </button>
+                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.showEditForm('${compId}'); document.getElementById('hudContextMenu').remove();">
+                                    <span>✏️</span> Rediger
+                                </button>
+                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.showAddForm('${compId}', 'outlet'); document.getElementById('hudContextMenu').remove();">
+                                    <span>➕</span> Tilføj
+                                </button>
+                                ${splitBtnHtml}
+                            </div>
+                        `;
+
+                        document.body.appendChild(hudMenu);
+
+                        // 2. Positioner præcist ved musen (Body er ikke skaleret, så ingen math division er nødvendig her!)
+                        hudMenu.style.left = `${e.clientX}px`;
+                        hudMenu.style.top = `${e.clientY}px`;
+                        hudMenu.style.width = '200px'; // Gør menuen mere kompakt
+                        
+                        // Lille forsinkelse for at CSS-animationen (scale) kicker ind
+                        setTimeout(() => {
+                            hudMenu.classList.add('active');
+                        }, 10);
+
+                        // 3. Autoluk, hvis man klikker udenfor menuen
+                        setTimeout(() => {
+                            const closeMenu = (eClick) => {
+                                if (!hudMenu.contains(eClick.target)) {
+                                    hudMenu.remove();
+                                    document.removeEventListener('click', closeMenu);
+                                    document.removeEventListener('contextmenu', closeMenu);
+                                }
+                            };
+                            document.addEventListener('click', closeMenu);
+                            document.addEventListener('contextmenu', closeMenu);
+                        }, 50);
+
                     }
                     break; // Find kun det forreste objekt!
                 }
             }
+
+            if (intersects.length > 0 && !ramteGyldigtObjekt) {
+                console.log("❌ [Raycaster] Ramte noget, men det var baggrundspynt uden compId (fx en pil eller grid).");
+            }
+        });
+
+        // Bloker browserens grimme standard-højreklik-menu på vores canvas
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault(); 
         });
     }
 
