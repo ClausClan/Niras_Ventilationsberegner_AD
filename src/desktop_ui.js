@@ -1,27 +1,11 @@
 /**
  * Desktop Mode Manager (Easter Egg Beta)
- * Håndterer injektion af CSS og layout-skift til split-screen.
+ * Håndterer logikk og layout-skift til split-screen.
+ * (Selve CSS-styling ligger nå i style.css for bedre vedlikehold)
  */
 
 export function initDesktopMode() {
-    // 1. Injicer Desktop Mode CSS dynamisk (Kun Glow-effekten, resten er i style.css)
-    const style = document.createElement('style');
-    style.innerHTML = `
-        /* Easter Egg Glow Effect */
-        .adv-easter-egg {
-            cursor: pointer;
-            transition: all 0.3s ease;
-            display: inline-block;
-        }
-        .adv-easter-egg.active-glow {
-            color: #00ff88;
-            text-shadow: 0 0 10px #00ff88, 0 0 20px #00ff88;
-            transform: scale(1.05);
-        }
-    `;
-    document.head.appendChild(style);
-
-    // 2. Sæt Event Listener på ADV-teksten (venter på DOM)
+    // Sørger for at Event Listener kobles til ADV-teksten når DOM er klar
     window.addEventListener('DOMContentLoaded', () => {
         const toggleBtn = document.getElementById('desktopModeToggle');
         if (toggleBtn) {
@@ -31,9 +15,9 @@ export function initDesktopMode() {
 }
 
 function toggleDesktopMode() {
-    // Tjek om skærmen er bred nok
-    if (window.innerWidth < 1024) {
-        alert("Skærmen er for smal til Desktop Mode. Kræver mindst 1024px bredde.");
+    // Sjekk om skjermen er bred nok til at Desktop Mode gir mening
+    if (window.innerWidth < 700) {
+        alert("Skjermen er for smal til Desktop Mode. Krever minst 1024px bredde.");
         return;
     }
 
@@ -51,25 +35,25 @@ function toggleDesktopMode() {
     const toggleBtn = document.getElementById('toggleViewBtn');
 
     if (isDesktop) {
-        // --- GÅR IND I DESKTOP MODE ---
-        // Sørg for at fjerne inline 'display: none', hvis brugeren havde diagrammet åbent på mobilen
+        // --- GÅR INN I DESKTOP MODE ---
+        // Sørg for å fjerne inline 'display: none' hvis brukeren hadde diagrammet åpent på mobilen
         if (tableContainer) tableContainer.style.display = '';
         if (dropContainer) dropContainer.style.display = '';
         
-        // Tving 3D vinduet synligt
+        // Tving 3D vinduet synlig
         if (diagContainer) {
             diagContainer.style.display = 'block';
-            diagContainer.classList.add('active'); // Synkroniser med diagram.js state
+            diagContainer.classList.add('active'); // Synkroniserer med diagram.js state
         }
         
         setTimeout(() => {
             if (window.renderDiagram) window.renderDiagram(true); // true = behold kameravinkel
-            window.dispatchEvent(new Event('resize')); // Opdater Three.js canvas
+            window.dispatchEvent(new Event('resize')); // Oppdater Three.js canvas slik at det passer til den nye plassen
         }, 50);
 
     } else {
-        // --- GÅR UD AF DESKTOP MODE ---
-        // Skjul diagrammet igen og returner til standard tabel-visning
+        // --- GÅR UT AV DESKTOP MODE ---
+        // Skjul diagrammet igjen og returner til standard tabell-visning
         if (diagContainer) {
             diagContainer.style.display = 'none';
             diagContainer.classList.remove('active');
@@ -77,7 +61,7 @@ function toggleDesktopMode() {
         if (tableContainer) tableContainer.style.display = '';
         if (dropContainer) dropContainer.style.display = '';
         
-        // Nulstil knappen
+        // Nullstill teksten på knappen
         if (toggleBtn) toggleBtn.innerHTML = 'Vis diagram';
     }
 }
