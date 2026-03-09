@@ -90,45 +90,48 @@ export function getSystemFormHtml() {
     return `
         <section id="systemSectionWrapper">
             <div id="systemLeftPane">
-                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--border-color); margin-bottom: 25px;">
-                    <h2 style="border: none; margin: 0; padding-bottom: 10px;">Systemberegning</h2>
-                    <div style="display: flex; gap: 10px; align-items: center;">
-                        <button type="button" id="toggleViewBtn" class="button secondary" style="width: auto; margin: 0; padding: 5px 15px;" onclick="window.toggleDiagramView()">Vis diagram</button>
-                    </div>
-                    <div class="system-menu-container">
-                        <button type="button" class="system-menu-btn" onclick="window.toggleSystemMenu()">&#8942;</button>
-                        <div id="systemMenu" class="system-menu-dropdown hidden">
-                            <button type="button" id="btnMenuNew" class="menu-item-btn">Ny beregning</button>
-                            <button type="button" id="btnMenuLoad" class="menu-item-btn">Hent projekt...</button>
-                            <button type="button" id="btnMenuSaveAs" class="menu-item-btn">Gem som (projekt)...</button>
-                            <hr style="margin: 5px 0; border: 0; border-top: 1px solid var(--border-color);">
-                            <button type="button" id="btnMenuSaveFile" class="menu-item-btn">Gem fil (JSON)...</button>
-                            <button type="button" id="btnMenuLoadFile" class="menu-item-btn">Hent fil (JSON)...</button>
-                            <button type="button" id="btnMenuPrint" class="menu-item-btn">Skriv ud dokumentation...</button>
+                <div id="systemLeftScrollArea" class="system-scroll-area">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--border-color); margin-bottom: 25px;">
+                        <h2 style="border: none; margin: 0; padding-bottom: 10px;">Systemberegning</h2>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <button type="button" id="toggleViewBtn" class="button secondary" style="width: auto; margin: 0; padding: 5px 15px;" onclick="window.toggleDiagramView()">Vis diagram</button>
+                        </div>
+                        <div class="system-menu-container">
+                            <button type="button" class="system-menu-btn" onclick="window.toggleSystemMenu()">&#8942;</button>
+                            <div id="systemMenu" class="system-menu-dropdown hidden">
+                                <button type="button" id="btnMenuNew" class="menu-item-btn">Ny beregning</button>
+                                <button type="button" id="btnMenuLoad" class="menu-item-btn">Hent projekt...</button>
+                                <button type="button" id="btnMenuSaveAs" class="menu-item-btn">Gem som (projekt)...</button>
+                                <hr style="margin: 5px 0; border: 0; border-top: 1px solid var(--border-color);">
+                                <button type="button" id="btnMenuSaveFile" class="menu-item-btn">Gem fil (JSON)...</button>
+                                <button type="button" id="btnMenuLoadFile" class="menu-item-btn">Hent fil (JSON)...</button>
+                                <button type="button" id="btnMenuPrint" class="menu-item-btn">Skriv ud dokumentation...</button>
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <div class="input-group">
-                    <label for="projectName">Projektnavn</label>
-                    <input type="text" id="projectName" class="input-field" placeholder="f.eks. Ombygning af kontor, etage 3">
+                    <div class="input-group">
+                        <label for="projectName">Projektnavn</label>
+                        <input type="text" id="projectName" class="input-field" placeholder="f.eks. Ombygning af kontor, etage 3">
+                    </div>
+                    
+                    <div class="input-group">
+                            <label>Systemtype</label>
+                            <div id="globalSystemTypeGroup" class="radio-group"> 
+                                <input type="radio" id="sysTypeSupply" name="systemFlowType" value="splitting" checked><label for="sysTypeSupply">Indblæsning</label> 
+                                <input type="radio" id="sysTypeExhaust" name="systemFlowType" value="merging"><label for="sysTypeExhaust">Udsugning</label> 
+                            </div>
+                    </div>
+                    
+                    <div class="input-group">
+                            <label for="system_airflow">Start luftmængde</label>
+                            <div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="system_airflow" class="input-field" required></div>
+                    </div>
+                    
+                    <div id="systemComponentsContainer"></div>
                 </div>
                 
-                <div class="input-group">
-                        <label>Systemtype</label>
-                        <div id="globalSystemTypeGroup" class="radio-group"> 
-                            <input type="radio" id="sysTypeSupply" name="systemFlowType" value="splitting" checked><label for="sysTypeSupply">Indblæsning</label> 
-                            <input type="radio" id="sysTypeExhaust" name="systemFlowType" value="merging"><label for="sysTypeExhaust">Udsugning</label> 
-                        </div>
-                </div>
-                
-                <div class="input-group">
-                        <label for="system_airflow">Start luftmængde</label>
-                        <div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="system_airflow" class="input-field" required></div>
-                </div>
-                
-                <div id="systemComponentsContainer"></div>
-                <div id="totalPressureDropContainer" class="results-container"></div>
+                <div id="totalPressureDropContainer" class="results-container sticky-bottom-result"></div>
             </div>
             
             <div id="systemRightPane">
