@@ -69,6 +69,7 @@ function getColor(comp, mode, min, max) {
 // Global 3D States
 let scene, camera, renderer, controls;
 let labelsMap = new Map(); // Keep track of HTML labels
+let materialCache = {}; // Fast cache for materialer tværs af opdateringer
 
 // --- Toggle Diagram View ---
 export function toggleDiagramView() {
@@ -229,7 +230,7 @@ export function renderDiagram(keepControls = false) {
         animate();
 
         window.addEventListener('resize', () => {
-            if (webglContainer) {
+            if (webglContainer && webglContainer.clientWidth > 0 && webglContainer.clientHeight > 0) {
                 camera.aspect = webglContainer.clientWidth / webglContainer.clientHeight;
                 camera.updateProjectionMatrix();
                 renderer.setSize(webglContainer.clientWidth, webglContainer.clientHeight);
@@ -241,6 +242,15 @@ export function renderDiagram(keepControls = false) {
         let obj = scene.children[i];
         if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "ArrowHelper") {
             scene.remove(obj);
+            // Sikker GPU hukommelses-oprydning for ægte Soft Refresh (Forhindrer memory leaks)
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) {
+                // Ryd kun op i materialet, hvis det blev klonet unikt til dette objekt
+                if (!Object.values(materialCache).includes(obj.material)) {
+                    if (obj.material.map) obj.material.map.dispose();
+                    obj.material.dispose();
+                }
+            }
         }
     }
 
@@ -307,8 +317,6 @@ export function renderDiagram(keepControls = false) {
             `;
         }
     }
-
-    const materialCache = {};
 
     const createGradientTexture = (colorHexStart, colorHexEnd) => {
         const canvas = document.createElement('canvas');

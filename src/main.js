@@ -1328,6 +1328,18 @@ function recalculateSystem() {
 
     ui.renderSystem();
     ui.handleComponentTypeChange();
+
+    // --- LIVE OPDATERING AF 3D (SOFT REFRESH) ---
+    const diagContainer = document.getElementById('systemDiagramContainer');
+    const isDesktop = document.body.classList.contains('desktop-mode');
+    const isDiagActive = diagContainer && diagContainer.classList.contains('active');
+    
+    // Opdater kun 3D hvis det faktisk er synligt for brugeren (sparer strøm)
+    if (isDesktop || isDiagActive) {
+        if (window.renderDiagram) {
+            window.renderDiagram(true); // true = behold kameravinkel
+        }
+    }
 }
 window.recalculateSystem = recalculateSystem;
 
