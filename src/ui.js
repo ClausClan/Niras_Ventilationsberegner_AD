@@ -15,6 +15,35 @@ window.toggleBranchCollapse = function(branchId) {
     renderSystem();
 };
 
+window.highlightTableRow = function(id) {
+    const row = document.querySelector(`tr[data-comp-id="${id}"]`);
+    if (row) {
+        const scrollArea = document.getElementById('systemLeftScrollArea');
+        const isDesktop = document.body.classList.contains('desktop-mode');
+        
+        if (scrollArea && isDesktop) {
+            // Præcis og afgrænset scroll, der KUN rykker inde i tabellen
+            const scrollAreaRect = scrollArea.getBoundingClientRect();
+            const rowRect = row.getBoundingClientRect();
+            const relativeTop = rowRect.top - scrollAreaRect.top + scrollArea.scrollTop;
+            
+            scrollArea.scrollTo({ 
+                top: relativeTop - (scrollArea.clientHeight / 2) + (rowRect.height / 2), 
+                behavior: 'smooth' 
+            });
+        } else {
+            // Standard fallback til mobilvisning
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        const oldBg = row.style.backgroundColor;
+        row.style.backgroundColor = 'rgba(57, 255, 20, 0.3)'; // Neon grøn highlight
+        setTimeout(() => {
+            row.style.backgroundColor = oldBg || '';
+        }, 2000);
+    }
+};
+
 // --- GLOBAL MOUSE TRACKER (Til flydende Desktop-menuer) ---
 window.lastMouseX = window.innerWidth / 2;
 window.lastMouseY = window.innerHeight / 2;
@@ -474,7 +503,7 @@ export function renderSystem() {
         }
 
         let rowHtml = `
-            <tr class="${rowClass}">
+            <tr class="${rowClass}" data-comp-id="${c.id}" onmouseenter="if(window.highlight3DComponent) window.highlight3DComponent('${c.id}')" onmouseleave="if(window.reset3DHighlight) window.reset3DHighlight()" style="transition: background-color 0.3s;">
                 <td style="padding-left: ${paddingLeft + 10}px;">
                     ${pathLabelHtml}
                     <div style="display:flex; align-items:center; gap: 8px;">
