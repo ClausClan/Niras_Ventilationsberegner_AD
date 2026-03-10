@@ -1277,3 +1277,103 @@
                 display: none !important;
             }
         }
+
+                /* ==========================================================================
+           HUD CONTEXT MENU (Trin 5)
+           ========================================================================== */
+        .hud-context-menu {
+            position: fixed;
+            z-index: 9999;
+            background: rgba(15, 15, 26, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--primary-neon-blue);
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), inset 0 0 15px rgba(0, 228, 255, 0.1);
+            color: #fff;
+            padding: 15px;
+            width: 240px;
+            /* Placerer boksen lidt over musen og skalerer den op for animation */
+            transform: translate(-50%, calc(-100% - 20px)) scale(0.8);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            font-family: 'Inter', sans-serif;
+        }
+
+        .hud-context-menu.active {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translate(-50%, calc(-100% - 20px)) scale(1);
+        }
+
+        /* Den lille hologram-pil ned mod røret */
+        .hud-context-menu::after {
+            content: '';
+            position: absolute;
+            bottom: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-width: 8px 8px 0;
+            border-style: solid;
+            border-color: var(--primary-neon-blue) transparent transparent transparent;
+            display: block;
+            width: 0;
+        }
+
+        .hud-header {
+            font-weight: 700;
+            font-size: 1.05rem;
+            margin-bottom: 8px;
+            border-bottom: 1px solid rgba(0, 228, 255, 0.3);
+            padding-bottom: 8px;
+            color: var(--primary-neon-blue);
+            text-shadow: 0 0 8px var(--primary-neon-blue);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .hud-data {
+            font-size: 0.85rem;
+            color: #A0A0A0;
+            margin-bottom: 12px;
+            line-height: 1.6;
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 4px;
+        }
+
+        .hud-data span {
+            color: #fff;
+            font-weight: 600;
+            text-align: right;
+        }
+
+        .hud-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .hud-btn {
+            background: rgba(0, 228, 255, 0.05);
+            border: 1px solid rgba(0, 228, 255, 0.2);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: left;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .hud-btn:hover {
+            background: rgba(0, 228, 255, 0.2);
+            border-color: var(--primary-neon-blue);
+            box-shadow: 0 0 10px rgba(0, 228, 255, 0.4);
+            transform: translateX(4px); /* Lille slide-effekt ved hover */
+        }

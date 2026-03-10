@@ -69,6 +69,35 @@ function getColor(comp, mode, min, max) {
 // Global 3D States
 let scene, camera, renderer, controls;
 let labelsMap = new Map(); // Keep track of HTML labels
+let materialCache = {}; // Fast cache for materialer tværs af opdateringer
+let currentlyHighlightedMeshes = []; // Holder styr på oplyste meshes under Hover
+
+// --- HOVER LOGIK FRA TABEL ---
+window.highlight3DComponent = (id) => {
+    if (!scene) return;
+    window.reset3DHighlight(); // Ryd op i evt. tidligere highlights
+    scene.traverse((child) => {
+        // Sikrer at vi sammenligner tekst mod tekst, da ID'er kan være tal i databasen!
+        if (child.isMesh && child.userData.compId != null && String(child.userData.compId) === String(id)) {
+            child.userData.originalMaterial = child.material;
+            child.material = child.material.clone(); // Klon materialet, så vi ikke maler alle rør grønne!
+            child.material.emissive.setHex(0x39FF14); // Neon Green glow
+            child.material.emissiveIntensity = 0.5;
+            currentlyHighlightedMeshes.push(child);
+        }
+    });
+};
+
+window.reset3DHighlight = () => {
+    currentlyHighlightedMeshes.forEach(mesh => {
+        if (mesh.userData.originalMaterial) {
+            mesh.material.dispose(); // Ryd op i GPU-hukommelsen for det klonede materiale
+            mesh.material = mesh.userData.originalMaterial;
+        }
+    });
+    currentlyHighlightedMeshes = [];
+};
+
 
 // --- Toggle Diagram View ---
 export function toggleDiagramView() {
@@ -229,18 +258,187 @@ export function renderDiagram(keepControls = false) {
         animate();
 
         window.addEventListener('resize', () => {
-            if (webglContainer) {
+            if (webglContainer && webglContainer.clientWidth > 0 && webglContainer.clientHeight > 0) {
                 camera.aspect = webglContainer.clientWidth / webglContainer.clientHeight;
                 camera.updateProjectionMatrix();
                 renderer.setSize(webglContainer.clientWidth, webglContainer.clientHeight);
             }
         });
+
+        // --- RAYCASTER EVENT LISTENERS MED SLADREHANK ---
+        const canvas = renderer.domElement; 
+        let pointerDownPos = { x: 0, y: 0 };
+        let isDragging = false;
+
+        canvas.addEventListener('pointerdown', (e) => {
+            pointerDownPos.x = e.clientX;
+            pointerDownPos.y = e.clientY;
+            isDragging = false;
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            const dx = Math.abs(e.clientX - pointerDownPos.x);
+            const dy = Math.abs(e.clientY - pointerDownPos.y);
+            if (dx > 5 || dy > 5) isDragging = true; // Beskytter mod at forveksle kameradrej med klik
+        });
+        
+        // Fanger både Venstre (0) og Højre (2) klik præcist her!
+        canvas.addEventListener('pointerup', (e) => {
+            if (isDragging) {
+                console.log("🖱️ [Raycaster] Ignorerede klik (brugeren trækker i kameraet).");
+                return; 
+            }
+
+            console.log(`🖱️ [Raycaster] Klik registreret. Knap: ${e.button === 0 ? 'Venstre' : (e.button === 2 ? 'Højre' : e.button)}`);
+
+            const rect = canvas.getBoundingClientRect();
+            const mouse = new THREE.Vector2();
+            mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+
+            // Tjek kun mod objekter vi har markeret som interaktive meshes
+            const intersects = raycaster.intersectObjects(scene.children, true);
+            console.log(`🎯 [Raycaster] Strålen traf ${intersects.length} objekt(er).`);
+
+            let ramteGyldigtObjekt = false;
+
+            for (let i = 0; i < intersects.length; i++) {
+                const obj = intersects[i].object;
+                if (obj.userData && obj.userData.compId != null) {
+                    ramteGyldigtObjekt = true;
+                    const compId = String(obj.userData.compId);
+                    console.log(`✅ [Raycaster] Fandt komponent ID: ${compId}`);
+                    
+                    if (e.button === 0) {
+                        // VENSTREKLIK -> Highlight og scroll rækken i tabellen
+                        if (window.highlightTableRow) {
+                            window.highlightTableRow(compId); 
+                        }
+                    } else if (e.button === 2) {
+                        // HØJREKLIK -> Vis HUD Hologram Menu
+                        console.log(`🚀 [HUD] Bygger menu for: ${compId}`);
+                        
+                        // Ekstra liret effekt: Lys røret op og rul tabellen ned, når du højreklikker!
+                        if (window.highlightTableRow) window.highlightTableRow(compId);
+                        if (window.highlight3DComponent) window.highlight3DComponent(compId);
+
+                        // 1. Byg HUD Menuen dynamisk!
+                        let hudMenu = document.getElementById('hudContextMenu');
+                        if (hudMenu) hudMenu.remove(); // Slet eksisterende
+
+                        hudMenu = document.createElement('div');
+                        hudMenu.id = 'hudContextMenu';
+                        hudMenu.className = 'hud-context-menu'; // Bruger klassen fra din style.css
+                        
+                        // Hent komponent data via App State
+                        const comp = window.stateManager ? window.stateManager.getSystemComponent(compId) : { name: "Ukendt", state: {} };
+                        const velocity = comp.state?.velocity ? comp.state.velocity.toFixed(2) : '-';
+                        const pressure = comp.state?.pressureLoss ? comp.state.pressureLoss.toFixed(2) : '-';
+                        const airflow = comp.state?.airflow_in || comp.airflow || 0;
+                        const shortId = compId.split('_')[1] || compId.substring(0,4);
+
+                        // Byg Split-knappen (Kun hvis det er en lige kanal)
+                        const splitBtnHtml = comp.type === 'straightDuct' 
+                            ? `<button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="console.log('Split funktionalitet kommer senere...'); document.getElementById('hudContextMenu').remove();">
+                                   <span>✂️</span> Split kanal
+                               </button>`
+                            : '';
+                            
+                        // Tjek om det er en lige kanal, og tilføj ekstra data-rækker
+                        let extraDataHtml = '';
+                        if (comp.type === 'straightDuct') {
+                            const length = comp.properties?.length ? parseFloat(comp.properties.length).toFixed(2) : '-';
+                            const dpPerMeter = comp.state?.calculationDetails?.pressureDrop ? comp.state.calculationDetails.pressureDrop.toFixed(2) : '-';
+                            
+                            extraDataHtml = `
+                                <div>Længde:</div> <span>${length} m</span>
+                                <div>Tryktab:</div> <span>${dpPerMeter} Pa/m</span>
+                            `;
+                        }
+
+                        // Stramt, kompakt design via inline overrides
+                        hudMenu.innerHTML = `
+                            <div class="hud-header" style="font-size: 0.95rem; padding-bottom: 5px; margin-bottom: 5px;">
+                                <strong>${comp.name}</strong>
+                                <span class="hud-id" style="font-size: 0.7rem;">#${shortId}</span>
+                            </div>
+                            <div class="hud-data" style="font-size: 0.8rem; margin-bottom: 8px;">
+                                <div>Flow:</div> <span>${Math.round(airflow)} m³/h</span>
+                                <div>Hast.:</div> <span>${velocity} m/s</span>
+                                ${extraDataHtml}
+                                <div>Total Tab:</div> <span>${pressure} Pa</span>
+                            </div>
+                            <div class="hud-actions" style="gap: 4px;">
+                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.showSystemComponentDetails('${compId}'); document.getElementById('hudContextMenu').remove();">
+                                    <span>ℹ️</span> Detaljer
+                                </button>
+                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.showEditForm('${compId}'); document.getElementById('hudContextMenu').remove();">
+                                    <span>✏️</span> Rediger
+                                </button>
+                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.showAddForm('${compId}', 'outlet'); document.getElementById('hudContextMenu').remove();">
+                                    <span>➕</span> Tilføj
+                                </button>
+                                ${splitBtnHtml}
+                            </div>
+                        `;
+
+                        document.body.appendChild(hudMenu);
+
+                        // 2. Positioner præcist ved musen (Body er ikke skaleret, så ingen math division er nødvendig her!)
+                        hudMenu.style.left = `${e.clientX}px`;
+                        hudMenu.style.top = `${e.clientY}px`;
+                        hudMenu.style.width = '200px'; // Gør menuen mere kompakt
+                        
+                        // Lille forsinkelse for at CSS-animationen (scale) kicker ind
+                        setTimeout(() => {
+                            hudMenu.classList.add('active');
+                        }, 10);
+
+                        // 3. Autoluk, hvis man klikker udenfor menuen
+                        setTimeout(() => {
+                            const closeMenu = (eClick) => {
+                                if (!hudMenu.contains(eClick.target)) {
+                                    hudMenu.remove();
+                                    document.removeEventListener('click', closeMenu);
+                                    document.removeEventListener('contextmenu', closeMenu);
+                                }
+                            };
+                            document.addEventListener('click', closeMenu);
+                            document.addEventListener('contextmenu', closeMenu);
+                        }, 50);
+
+                    }
+                    break; // Find kun det forreste objekt!
+                }
+            }
+
+            if (intersects.length > 0 && !ramteGyldigtObjekt) {
+                console.log("❌ [Raycaster] Ramte noget, men det var baggrundspynt uden compId (fx en pil eller grid).");
+            }
+        });
+
+        // Bloker browserens grimme standard-højreklik-menu på vores canvas
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault(); 
+        });
     }
 
+    // Ryd op i scene før re-render (inklusive evt. active hovers)
+    window.reset3DHighlight(); 
     for (let i = scene.children.length - 1; i >= 0; i--) {
         let obj = scene.children[i];
         if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "ArrowHelper") {
             scene.remove(obj);
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) {
+                if (!Object.values(materialCache).includes(obj.material)) {
+                    if (obj.material.map) obj.material.map.dispose();
+                    obj.material.dispose();
+                }
+            }
         }
     }
 
@@ -307,8 +505,6 @@ export function renderDiagram(keepControls = false) {
             `;
         }
     }
-
-    const materialCache = {};
 
     const createGradientTexture = (colorHexStart, colorHexEnd) => {
         const canvas = document.createElement('canvas');
@@ -440,6 +636,7 @@ export function renderDiagram(keepControls = false) {
             geometry.rotateX(Math.PI / 2);
 
             const mesh = new THREE.Mesh(geometry, material);
+            mesh.userData.compId = comp.id; // Tag mesh for hover/click
             mesh.position.copy(currentPos);
             mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
             scene.add(mesh);
@@ -492,6 +689,7 @@ export function renderDiagram(keepControls = false) {
             }
 
             const mesh = new THREE.Mesh(geometry, material);
+            mesh.userData.compId = comp.id; // Tag mesh for hover/click
             scene.add(mesh);
 
             midWay.copy(curve.getPoint(0.5));
@@ -556,6 +754,7 @@ export function renderDiagram(keepControls = false) {
             geometry.rotateX(Math.PI / 2);
 
             const mesh = new THREE.Mesh(geometry, material);
+            mesh.userData.compId = comp.id; // Tag mesh for hover/click
             mesh.position.copy(currentPos);
             mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
             scene.add(mesh);
@@ -580,7 +779,6 @@ export function renderDiagram(keepControls = false) {
 
             if (isBullhead) {
                 // --- BULLHEAD TEGNELOGIK ---
-                // For en bullhead går luften ind i midten og spreder sig 90 grader til hver side.
                 const dIn = (comp.properties?.d_in || diameterMm) / 1000 * PIXELS_PER_METER;
                 const dOut1 = (comp.properties?.d_out1 || diameterMm) / 1000 * PIXELS_PER_METER;
                 const dOut2 = (comp.properties?.d_out2 || diameterMm) / 1000 * PIXELS_PER_METER;
@@ -593,6 +791,7 @@ export function renderDiagram(keepControls = false) {
                 gIn.translate(0, stubLen/2, 0);
                 gIn.rotateX(Math.PI/2);
                 const meshIn = new THREE.Mesh(gIn, material);
+                meshIn.userData.compId = comp.id;
                 meshIn.position.copy(currentPos);
                 meshIn.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
                 scene.add(meshIn);
@@ -612,6 +811,7 @@ export function renderDiagram(keepControls = false) {
                 gB1.translate(0, stubLen/2, 0);
                 gB1.rotateX(Math.PI/2);
                 const meshB1 = new THREE.Mesh(gB1, material);
+                meshB1.userData.compId = comp.id;
                 meshB1.position.copy(midPos);
                 meshB1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path1Dir);
                 scene.add(meshB1);
@@ -621,6 +821,7 @@ export function renderDiagram(keepControls = false) {
                 gB2.translate(0, stubLen/2, 0);
                 gB2.rotateX(Math.PI/2);
                 const meshB2 = new THREE.Mesh(gB2, material);
+                meshB2.userData.compId = comp.id;
                 meshB2.position.copy(midPos);
                 meshB2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path2Dir);
                 scene.add(meshB2);
@@ -672,7 +873,6 @@ export function renderDiagram(keepControls = false) {
                 if (c2) drawTree3D(c2, end2Pos, path2Dir, path2Up);
                 else drawOpenEnd(end2Pos, path2Dir, 'outlet_path2');
 
-                // Returner tidligt fordi bullhead klarer sit eget recursive kald
                 drawLabels(comp, midWay, isIncluded);
                 bMin.min(currentPos); bMin.min(end1Pos); bMin.min(end2Pos);
                 bMax.max(currentPos); bMax.max(end1Pos); bMax.max(end2Pos);
@@ -698,6 +898,7 @@ export function renderDiagram(keepControls = false) {
                 gS.translate(0, moveDist / 2, 0);
                 gS.rotateX(Math.PI / 2);
                 const meshS = new THREE.Mesh(gS, material);
+                meshS.userData.compId = comp.id;
                 meshS.position.copy(currentPos);
                 meshS.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
                 scene.add(meshS);
@@ -712,6 +913,7 @@ export function renderDiagram(keepControls = false) {
                 gB.translate(0, stubLen / 2, 0);
                 gB.rotateX(Math.PI / 2);
                 const meshB = new THREE.Mesh(gB, material);
+                meshB.userData.compId = comp.id;
                 meshB.position.copy(midPos);
                 meshB.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), branchDir);
                 scene.add(meshB);
@@ -725,6 +927,7 @@ export function renderDiagram(keepControls = false) {
             const g = new THREE.BoxGeometry(radius3D * 2, radius3D * 2, moveDist);
             g.translate(0, 0, moveDist / 2);
             const m = new THREE.Mesh(g, material);
+            m.userData.compId = comp.id;
             m.position.copy(currentPos);
             m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
             scene.add(m);
@@ -758,7 +961,7 @@ export function renderDiagram(keepControls = false) {
             }
         }
 
-        // Tegn standard labels for alle komponenter udover Bullhead (som håndteres oppe i sin egen if-blok)
+        // Tegn standard labels for alle komponenter udover Bullhead
         if (pType !== 'tee_bullhead') {
             drawLabels(comp, midWay, isIncluded);
             bMin.min(currentPos); bMin.min(nextPos);

@@ -15,6 +15,230 @@ window.toggleBranchCollapse = function(branchId) {
     renderSystem();
 };
 
+window.highlightTableRow = function(id) {
+    const row = document.querySelector(`tr[data-comp-id="${id}"]`);
+    if (row) {
+        const scrollArea = document.getElementById('systemLeftScrollArea');
+        const isDesktop = document.body.classList.contains('desktop-mode');
+        
+        if (scrollArea && isDesktop) {
+            // Præcis og afgrænset scroll, der KUN rykker inde i tabellen
+            const scrollAreaRect = scrollArea.getBoundingClientRect();
+            const rowRect = row.getBoundingClientRect();
+            const relativeTop = rowRect.top - scrollAreaRect.top + scrollArea.scrollTop;
+            
+            scrollArea.scrollTo({ 
+                top: relativeTop - (scrollArea.clientHeight / 2) + (rowRect.height / 2), 
+                behavior: 'smooth' 
+            });
+        } else {
+            // Standard fallback til mobilvisning
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        const oldBg = row.style.backgroundColor;
+        row.style.backgroundColor = 'rgba(57, 255, 20, 0.3)'; // Neon grøn highlight
+        setTimeout(() => {
+            row.style.backgroundColor = oldBg || '';
+        }, 2000);
+    }
+};
+
+
+// --- 3D CONTEXT MENU (HUD / HOLOGRAM) ---
+window.show3DContextMenu = function(compId, mouseX, mouseY) {
+    // 1. Fjern eksisterende menu hvis den er åben
+    const existingMenu = document.getElementById('hudContextMenu');
+    if (existingMenu) existingMenu.remove();
+
+    const comp = window.stateManager.getSystemComponent(compId);
+    if (!comp) return;
+
+    // 2. Injicer CSS dynamisk (kun én gang) for at holde style.css "No Bloat"
+    if (!document.getElementById('hudMenuStyles')) {
+        const style = document.createElement('style');
+        style.id = 'hudMenuStyles';
+        style.innerHTML = `
+            #hudContextMenu {
+                position: fixed;
+                z-index: 3000;
+                background: rgba(15, 15, 26, 0.85); /* Dyb mørkblå transparant */
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                border: 1px solid var(--primary-neon-blue);
+                border-radius: 8px;
+                box-shadow: 0 0 15px rgba(0, 228, 255, 0.3), inset 0 0 20px rgba(0, 0, 0, 0.8);
+                width: 220px;
+                color: #fff;
+                font-family: 'Inter', sans-serif;
+                animation: hudFadeIn 0.15s ease-out forwards;
+                transform-origin: top left;
+            }
+            @keyframes hudFadeIn {
+                from { opacity: 0; transform: scale(0.9) translateY(-10px); }
+                to { opacity: 1; transform: scale(1) translateY(0); }
+            }
+            .hud-header {
+                padding: 10px 12px;
+                border-bottom: 1px solid rgba(0, 228, 255, 0.3);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                background: rgba(0, 228, 255, 0.1);
+                border-radius: 8px 8px 0 0;
+            }
+            .hud-header strong { font-size: 0.95rem; color: var(--primary-neon-blue); text-shadow: 0 0 5px var(--primary-neon-blue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;}
+            .hud-id { font-size: 0.7rem; color: var(--text-muted-color); }
+            .hud-stats { padding: 10px 12px; font-size: 0.85rem; display: flex; flex-direction: column; gap: 6px; }
+            .hud-stat { display: flex; align-items: center; gap: 8px; color: #ccc; }
+            .hud-stat span { color: var(--accent-neon-green); text-shadow: 0 0 3px var(--accent-neon-green); font-weight: bold; width: 15px; text-align: center; }
+            .hud-actions { display: flex; flex-direction: column; border-top: 1px solid rgba(255, 255, 255, 0.1); padding: 4px; }
+            .hud-actions button {
+                background: transparent; border: none; color: #ddd; padding: 8px 12px; text-align: left; font-size: 0.9rem; cursor: pointer; transition: all 0.2s; border-radius: 4px; display: flex; align-items: center; gap: 10px;
+            }
+            .hud-actions button:hover { background: rgba(255, 255, 255, 0.1); color: #fff; padding-left: 16px;}
+            .hud-actions button.hud-danger:hover { background: rgba(210, 33, 55, 0.2); color: #ff4444; }
+        `;
+        document.head.appendChild(style);
+    }
+
+    // 3. Byg HTML
+    const menu = document.createElement('div');
+    menu.id = 'hudContextMenu';
+    
+    const flow = comp.state?.airflow_in || comp.airflow || 0;
+    const pressure = comp.state?.pressureLoss || 0;
+    
+    // Gør ID kort og pænt til display
+    const shortId = compId.split('_')[1] || compId.substring(0,4);
+
+    menu.innerHTML = `
+        <div class="hud-header">
+            <strong>${comp.name}</strong>
+            <span class="hud-id">#${shortId}</span>
+        </div>
+        <div class="hud-stats">
+            <div class="hud-stat"><span>q</span> ${formatLocalFloat(flow, 0)} m³/h</div>
+            <div class="hud-stat"><span>Δp</span> ${formatLocalFloat(pressure, 2)} Pa</div>
+        </div>
+        <div class="hud-actions">
+            <button onclick="window.showSystemComponentDetails('${compId}'); document.getElementById('hudContextMenu').remove();">ⓘ Detaljer</button>
+            <button onclick="window.handleEditComponent('${compId}'); document.getElementById('hudContextMenu').remove();">✏️ Rediger</button>
+            <button class="hud-danger" onclick="window.handleDeleteComponent('${compId}'); document.getElementById('hudContextMenu').remove();">❌ Slet</button>
+        </div>
+    `;
+
+    document.body.appendChild(menu);
+
+    // 4. Positionering (kompenser for Desktop Scale)
+    const isDesktop = document.body.classList.contains('desktop-mode');
+    const scale = isDesktop ? 0.75 : 1;
+    let targetX = mouseX / scale;
+    let targetY = mouseY / scale;
+
+    const rect = menu.getBoundingClientRect();
+    const maxW = window.innerWidth / scale;
+    const maxH = window.innerHeight / scale;
+
+    // Skub op/til venstre, hvis den går ud over skærmen
+    if (targetX + rect.width > maxW) targetX = targetX - rect.width;
+    if (targetY + rect.height > maxH) targetY = targetY - rect.height;
+
+    menu.style.left = `${targetX}px`;
+    menu.style.top = `${targetY}px`;
+
+    // 5. Autoluk logik (Klikker du ved siden af, forsvinder den)
+    setTimeout(() => {
+        const closeMenu = (e) => {
+            if (!menu.contains(e.target)) {
+                menu.remove();
+                document.removeEventListener('click', closeMenu);
+                document.removeEventListener('contextmenu', closeMenu);
+            }
+        };
+        document.addEventListener('click', closeMenu);
+        document.addEventListener('contextmenu', closeMenu);
+    }, 10); // Lille timeout forhindrer at den lukker i samme millisekund, den åbner
+};
+
+
+// --- GLOBAL MOUSE TRACKER (Til flydende Desktop-menuer) ---
+window.lastMouseX = window.innerWidth / 2;
+window.lastMouseY = window.innerHeight / 2;
+document.addEventListener('mousedown', (e) => {
+    window.lastMouseX = e.clientX;
+    window.lastMouseY = e.clientY;
+});
+
+// --- HELPER TIL DRAG & DROP + BOUNDS TJEK ---
+function makeFormDraggableAndBounded(formWrapper) {
+    const isDesktop = document.body.classList.contains('desktop-mode');
+    if (!isDesktop) return;
+
+    const scale = 0.75; // Vores ægte desktop CSS scale
+    
+    // 1. Gør formularen trækbar via headeren
+    const header = formWrapper.querySelector('.form-header-drag');
+    if (header) {
+        let isDragging = false;
+        let startX, startY, initialLeft, initialTop;
+
+        header.style.cursor = 'grab';
+        header.addEventListener('mousedown', (e) => {
+            if (e.target.tagName.toLowerCase() === 'button') return; // Ignorer knap-klik
+            
+            isDragging = true;
+            header.style.cursor = 'grabbing';
+            startX = e.clientX;
+            startY = e.clientY;
+            initialLeft = parseFloat(formWrapper.style.left) || 0;
+            initialTop = parseFloat(formWrapper.style.top) || 0;
+            
+            const onMouseMove = (eMove) => {
+                if (!isDragging) return;
+                // Dividerer musens bevægelse med vores zoom-faktor for at træk-hastigheden matcher!
+                const dx = (eMove.clientX - startX) / scale;
+                const dy = (eMove.clientY - startY) / scale;
+                formWrapper.style.left = `${initialLeft + dx}px`;
+                formWrapper.style.top = `${initialTop + dy}px`;
+            };
+            
+            const onMouseUp = () => {
+                isDragging = false;
+                header.style.cursor = 'grab';
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+            };
+            
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+    }
+
+    // 2. Sikr at formularen ikke vokser ud af skærmen (Auto-bounds)
+    const resizeObserver = new ResizeObserver(() => {
+        let currentLeft = parseFloat(formWrapper.style.left) || 0;
+        let currentTop = parseFloat(formWrapper.style.top) || 0;
+        const width = formWrapper.offsetWidth;
+        const height = formWrapper.offsetHeight;
+        const maxW = window.innerWidth / scale;
+        const maxH = window.innerHeight / scale;
+
+        let updated = false;
+        if (currentLeft + width > maxW) { currentLeft = maxW - width - 20; updated = true; }
+        if (currentTop + height > maxH) { currentTop = maxH - height - 20; updated = true; }
+        if (currentLeft < 10) { currentLeft = 10; updated = true; }
+        if (currentTop < 10) { currentTop = 10; updated = true; }
+
+        if (updated) {
+            formWrapper.style.left = `${currentLeft}px`;
+            formWrapper.style.top = `${currentTop}px`;
+        }
+    });
+    resizeObserver.observe(formWrapper);
+}
+
+
 // --- HTML Generatorer ---
 
 export function getDimFormHtml() {
@@ -223,7 +447,7 @@ export function renderSystem() {
         }
         
         systemComponentsContainer.innerHTML = `
-            <div id="emptyStateButtonContainer" style="text-align:center; padding: 40px 20px; background: #f9f9f9; border: 2px dashed var(--border-color); border-radius: 8px; margin-top: 20px; margin-bottom: 20px;">
+            <div id="emptyStateButtonContainer" style="text-align:center; padding: 40px 20px; background: var(--input-bg-color); border: 2px dashed var(--border-color); border-radius: 8px; margin-top: 20px; margin-bottom: 20px;">
                 <p style="color: var(--text-muted-color); margin-bottom: 20px; font-size: 1.1em;">${noteText}</p>
                 <button class="button primary" style="padding: 10px 24px; font-size: 1.1em;" onclick="window.showAddForm(null, null)">+ Tilføj første komponent</button>
             </div>
@@ -393,11 +617,11 @@ export function renderSystem() {
             isCollapsed = window.collapsedBranches.has(c.id);
             const icon = isCollapsed ? '+' : '−';
             // Viser Afgrening-tekst og fold-ud knap hvis det er starten af en gren
-            pathLabelHtml = `<div style="font-size:10px; color:#00E5FF; margin-bottom: 2px;">↳ ${labelPath} <span style="cursor:pointer; font-weight:bold; color:white; background:var(--primary-color); display:inline-block; margin-left:6px; border-radius:3px; padding:0 5px; font-size:11px;" onclick="window.toggleBranchCollapse('${c.id}')" title="Klap ind/ud">[${icon}]</span></div>`;
+            pathLabelHtml = `<div style="font-size:10px; color:#00A4E0; margin-bottom: 2px;">↳ ${labelPath} <span style="cursor:pointer; font-weight:bold; color:white; background:var(--primary-color); display:inline-block; margin-left:6px; border-radius:3px; padding:0 5px; font-size:11px;" onclick="window.toggleBranchCollapse('${c.id}')" title="Klap ind/ud">[${icon}]</span></div>`;
         }
 
         let rowHtml = `
-            <tr class="${rowClass}">
+            <tr class="${rowClass}" data-comp-id="${c.id}" onmouseenter="if(window.highlight3DComponent) window.highlight3DComponent('${c.id}')" onmouseleave="if(window.reset3DHighlight) window.reset3DHighlight()" style="transition: background-color 0.3s;">
                 <td style="padding-left: ${paddingLeft + 10}px;">
                     ${pathLabelHtml}
                     <div style="display:flex; align-items:center; gap: 8px;">
@@ -1388,11 +1612,10 @@ export function renderSystemDuctInputs(container, initialData = null) {
         <div id="sysDuctInputsContainer${suffix}"></div>
         
         <div style="margin-top:15px; border-top: 1px solid var(--border-color); padding-top: 10px;">
-            <strong style="font-size: 0.9rem; color: var(--text-color);">Termodynamik & Isolering</strong>
-            <div class="input-field-group" style="margin-top:10px;">
-                <div class="input-group"><label for="ductAmbient${suffix}">Omgivelsestemp.</label><div class="input-unit-wrapper" data-unit="°C"><input type="text" id="ductAmbient${suffix}" class="input-field" placeholder="auto"></div></div>
-                <div class="input-group"><label for="ductIsoThick${suffix}">Isoleringstykkelse</label><div class="input-unit-wrapper" data-unit="mm"><input type="text" id="ductIsoThick${suffix}" class="input-field" placeholder="0"></div></div>
-                <div class="input-group"><label for="ductIsoLambda${suffix}">Isolering Lambda (λ)</label><input type="text" id="ductIsoLambda${suffix}" class="input-field" placeholder="0.037"></div>
+            <div class="input-field-group">
+                <div class="input-group"><label for="ductAmbient${suffix}">Omg.temp</label><div class="input-unit-wrapper" data-unit="°C"><input type="text" id="ductAmbient${suffix}" class="input-field" placeholder="auto"></div></div>
+                <div class="input-group"><label for="ductIsoThick${suffix}">Isolering(mm)</label><div class="input-unit-wrapper" data-unit="mm"><input type="text" id="ductIsoThick${suffix}" class="input-field" placeholder="0"></div></div>
+                <div class="input-group"><label for="ductIsoLambda${suffix}">Isolering(λ)</label><input type="text" id="ductIsoLambda${suffix}" class="input-field" placeholder="0.037"></div>
             </div>
         </div>
 
@@ -1577,11 +1800,10 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
     if (inputsHtml) {
         inputsHtml += `
         <div style="margin-top:15px; border-top: 1px solid var(--border-color); padding-top: 10px;">
-            <strong style="font-size: 0.9rem; color: var(--text-color);">Termodynamik & Isolering</strong>
-            <div class="input-field-group" style="margin-top:10px;">
-                <div class="input-group"><label for="${id('sys_ambient')}">Rummets temp.</label><div class="input-unit-wrapper" data-unit="°C"><input type="text" id="${id('sys_ambient')}" class="input-field" placeholder="auto"></div></div>
-                <div class="input-group"><label for="${id('sys_isoThick')}">Isoleringstykkelse</label><div class="input-unit-wrapper" data-unit="mm"><input type="text" id="${id('sys_isoThick')}" class="input-field" placeholder="0"></div></div>
-                <div class="input-group"><label for="${id('sys_isoLambda')}">Isolering Lambda (λ)</label><input type="text" id="${id('sys_isoLambda')}" class="input-field" placeholder="0.037"></div>
+            <div class="input-field-group">
+                <div class="input-group"><label for="${id('sys_ambient')}">Omg.temp</label><div class="input-unit-wrapper" data-unit="°C"><input type="text" id="${id('sys_ambient')}" class="input-field" placeholder="auto"></div></div>
+                <div class="input-group"><label for="${id('sys_isoThick')}">Isolering(mm)</label><div class="input-unit-wrapper" data-unit="mm"><input type="text" id="${id('sys_isoThick')}" class="input-field" placeholder="0"></div></div>
+                <div class="input-group"><label for="${id('sys_isoLambda')}">Isolering(λ)</label><input type="text" id="${id('sys_isoLambda')}" class="input-field" placeholder="0.037"></div>
             </div>
         </div>`;
         targetContainer.innerHTML = inputsHtml + `<button type="button" class="button primary" onclick="${btnAction}">${btnText}</button>`;
@@ -1653,25 +1875,38 @@ export function showEditForm(id) {
     const component = getSystemComponent(id);
     if (!component) return;
 
-    // Fjerner gammel edit form i tabellen for at rykke den ud
-    const existingEditRows = document.querySelectorAll('.edit-row');
-    existingEditRows.forEach(row => row.remove());
-
+    const isDesktop = document.body.classList.contains('desktop-mode');
+    
     const formWrapper = document.createElement('div');
-    formWrapper.className = 'inline-form-wrapper';
-    formWrapper.style.background = '#f9f9f9';
-    formWrapper.style.padding = '20px';
-    formWrapper.style.border = '2px solid var(--primary-color)';
-    formWrapper.style.borderRadius = '8px';
-    formWrapper.style.marginTop = '15px';
-    formWrapper.style.marginBottom = '15px';
+    // Tilføj klassen .desktop-compact-form, hvis vi er på desktop
+    formWrapper.className = isDesktop ? 'inline-form-wrapper desktop-compact-form' : 'inline-form-wrapper';
+    
+    // --- STYLING AF FORMULAREN (Flydende på desktop, Inline på mobil) ---
+    if (isDesktop) {
+        formWrapper.style.position = 'fixed';
+        formWrapper.style.zIndex = '2000';
+        formWrapper.style.maxHeight = '85vh';
+        formWrapper.style.overflowY = 'auto';
+        formWrapper.style.background = 'var(--content-bg-color)';
+        formWrapper.style.border = '2px solid var(--primary-color)';
+        formWrapper.style.borderRadius = '12px';
+        formWrapper.style.boxShadow = '0 15px 40px rgba(0,0,0,0.5)';
+        formWrapper.style.margin = '0';
+    } else {
+        formWrapper.style.background = 'var(--content-bg-color)';
+        formWrapper.style.padding = '20px';
+        formWrapper.style.border = '2px dashed var(--primary-color)';
+        formWrapper.style.borderRadius = '8px';
+        formWrapper.style.marginTop = '15px';
+        formWrapper.style.marginBottom = '15px';
+    }
 
     const suffix = '_edit';
     const containerId = `edit_container_${id}`;
     formWrapper.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-            <h4 style="margin:0;">Rediger: ${component.name}</h4>
-            <button class="button secondary" style="padding:4px 12px; font-size:12px;" onclick="this.closest('.inline-form-wrapper').remove()">Annuller</button>
+        <div class="form-header-drag" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color);">
+            <h4 style="margin:0; color: var(--primary-color); pointer-events:none;">Rediger <br><small style="color:var(--text-muted-color); font-weight:normal; font-size:0.85rem;">${component.name}</small></h4>
+            <button class="button secondary" style="padding:4px 12px; width:auto; margin:0;" onclick="this.closest('.inline-form-wrapper').remove()">Annuller & Luk</button>
         </div>
         <div id="${containerId}"></div>
     `;
@@ -1695,16 +1930,26 @@ export function showEditForm(id) {
         container.innerHTML = 'Redigering ikke understøttet for denne type endnu.';
     }
 
-    setTimeout(() => {
-        formWrapper.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }, 50);
+    // --- PLACERING OG DRAG-LOGIK ---
+    if (isDesktop) {
+        const scale = 0.75;
+        let targetX = (window.lastMouseX / scale) + 15;
+        let targetY = (window.lastMouseY / scale) + 15;
+        formWrapper.style.left = `${targetX}px`;
+        formWrapper.style.top = `${targetY}px`;
+        
+        makeFormDraggableAndBounded(formWrapper);
+    } else {
+        setTimeout(() => {
+            formWrapper.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 50);
+    }
 }
 
 export function showAddForm(parentId, parentPort) {
     document.querySelectorAll('.inline-form-wrapper').forEach(row => row.remove());
-    const existingAddRows = document.querySelectorAll('.add-form-row');
-    existingAddRows.forEach(row => row.remove());
-
+    
+    const isDesktop = document.body.classList.contains('desktop-mode');
     const isRoot = !parentId || parentId === 'null';
 
     if (isRoot) {
@@ -1745,19 +1990,34 @@ export function showAddForm(parentId, parentPort) {
     }
 
     const formWrapper = document.createElement('div');
-    formWrapper.className = 'inline-form-wrapper';
-    formWrapper.style.background = '#eef7ff';
-    formWrapper.style.padding = '20px';
-    formWrapper.style.border = '2px dashed #0084ff';
-    formWrapper.style.borderRadius = '8px';
-    formWrapper.style.marginTop = '15px';
-    formWrapper.style.marginBottom = '15px';
+    // Tilføj klassen .desktop-compact-form, hvis vi er på desktop
+    formWrapper.className = isDesktop ? 'inline-form-wrapper desktop-compact-form' : 'inline-form-wrapper';
+    
+    // --- STYLING AF FORMULAREN (Flydende på desktop, Inline på mobil) ---
+    if (isDesktop) {
+        formWrapper.style.position = 'fixed';
+        formWrapper.style.zIndex = '2000';
+        formWrapper.style.maxHeight = '85vh';
+        formWrapper.style.overflowY = 'auto';
+        formWrapper.style.background = 'var(--content-bg-color)';
+        formWrapper.style.border = '2px solid var(--primary-color)';
+        formWrapper.style.borderRadius = '12px';
+        formWrapper.style.boxShadow = '0 15px 40px rgba(0,0,0,0.5)';
+        formWrapper.style.margin = '0';
+    } else {
+        formWrapper.style.background = 'var(--content-bg-color)';
+        formWrapper.style.padding = '20px';
+        formWrapper.style.border = '2px dashed var(--primary-color)';
+        formWrapper.style.borderRadius = '8px';
+        formWrapper.style.marginTop = '15px';
+        formWrapper.style.marginBottom = '15px';
+    }
 
     const containerId = `add_container_${parentId || 'root'}_${parentPort || 'root'}`;
     formWrapper.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #ccc; padding-bottom:10px;">
-            <h4 style="margin:0; color: #0084ff;">Tilføj komponent <br><small style="color:#666; font-weight:normal; font-size:0.85rem;">Efter: ${contextText}</small></h4>
-            <button class="button secondary" style="padding:4px 12px; font-size:12px;" onclick="
+        <div class="form-header-drag" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color);">
+            <h4 style="margin:0; color: var(--primary-color); pointer-events:none;">Tilføj komponent <br><small style="color:var(--text-muted-color); font-weight:normal; font-size:0.85rem;">Efter: ${contextText}</small></h4>
+            <button class="button secondary" style="padding:4px 12px; width:auto; margin:0;" onclick="
                 this.closest('.inline-form-wrapper').remove(); 
                 const emptyBtn = document.getElementById('emptyStateButtonContainer');
                 if (emptyBtn && !window.stateManager.getSystemComponents().length) {
@@ -1772,11 +2032,11 @@ export function showAddForm(parentId, parentPort) {
             ">Annuller & Luk</button>
         </div>
         
-        <div class="input-group">
+        <div class="input-group" style="margin-top: 10px;">
             <label for="inlineComponentType">Komponenttype</label>
             <select id="inlineComponentType" class="input-field" onchange="window.handleInlineComponentTypeChange('${containerId}')">
                 <option value="">-- Vælg type --</option>
-                <option value="straightDuct">Rett kanal</option>
+                <option value="straightDuct">Kanal</option>
                 <option value="fitting">Formstykke</option>
                 <option value="manualLoss">Manuelt tab</option>
             </select>
@@ -1788,9 +2048,20 @@ export function showAddForm(parentId, parentPort) {
     const sysContainer = document.getElementById('systemComponentsContainer');
     sysContainer.appendChild(formWrapper);
 
-    setTimeout(() => {
-        formWrapper.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }, 50);
+    // --- PLACERING OG DRAG-LOGIK ---
+    if (isDesktop) {
+        const scale = 0.75;
+        let targetX = (window.lastMouseX / scale) + 15;
+        let targetY = (window.lastMouseY / scale) + 15;
+        formWrapper.style.left = `${targetX}px`;
+        formWrapper.style.top = `${targetY}px`;
+        
+        makeFormDraggableAndBounded(formWrapper);
+    } else {
+        setTimeout(() => {
+            formWrapper.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 50);
+    }
 }
 
 export function handleInlineComponentTypeChange(containerId) {
@@ -1957,5 +2228,11 @@ function validateTeeFlows(suffix, compId = null) {
     return true;
 }
 
+// --- Eksportér til det globale window-objekt så HTML 'onclick' virker ---
 window.showAddForm = showAddForm;
 window.handleInlineComponentTypeChange = handleInlineComponentTypeChange;
+window.showEditForm = showEditForm;
+window.handleEditComponent = showEditForm; // Alias så knappen inde i selve system-tabellen også virker
+window.showSystemComponentDetails = showSystemComponentDetails; // Gør 'Detaljer' knappen i HUD'en aktiv
+window.showDuctDetails = showDuctDetails;
+window.showFittingDetails = showFittingDetails;
