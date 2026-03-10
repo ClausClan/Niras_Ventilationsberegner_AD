@@ -83,14 +83,73 @@ window.handleDeleteLastComponent = () => {
     ui.handleComponentTypeChange();
 };
 
-window.handleDeleteComponent = (id) => {
-    ui.showConfirm("Er du sikker på, at du vil slette denne komponent? Dette kan påvirke efterfølgende beregninger.", () => {
-        deleteSystemComponent(id);
-        recalculateSystem(); 
-        ui.updateUndoRedoUI(canUndo(), canRedo()); 
-        ui.showSaveStatus('Ændringer gemt', 'saved');
-    });
-};
+    window.handleDeleteComponent = (id) => {
+        const graph = stateManager.getGraph();
+        const node = graph.nodes[id];
+        const outgoingEdges = graph.edges.filter(e => e.from === id);
+
+        // Hvis det er et T-stykke (eller anden komponent med flere udgange)
+        if (node && outgoingEdges.length > 1) {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal';
+            overlay.style.display = 'flex';
+            overlay.style.zIndex = '10000'; // Sørg for den ligger øverst
+            
+            let buttonsHtml = '';
+            outgoingEdges.forEach((edge, index) => {
+                const childNode = graph.nodes[edge.to];
+                const childName = childNode ? childNode.name : 'Ukendt';
+                
+                // Oversæt interne port-navne til læsevenligt dansk
+                let portLabel = edge.fromPort;
+                if (portLabel === 'outlet_straight') portLabel = 'Ligeud';
+                else if (portLabel === 'outlet_branch') portLabel = 'Afgrening';
+                
+                buttonsHtml += `
+                    <button class="button primary" style="margin-bottom: 10px;" onclick="document.body.removeChild(this.closest('.modal')); window.__branchDeleteCallback(${index})">
+                        Ja, behold ${portLabel} (${childName})
+                    </button>
+                `;
+            });
+
+            overlay.innerHTML = `
+                <div class="modal-content" style="max-width: 450px; text-align: center;">
+                    <div class="modal-header" style="border-bottom: none; justify-content: center; padding-bottom: 0;">
+                        <h3 style="color: var(--error-color);">Slet ${node.name}?</h3>
+                    </div>
+                    <div class="modal-body" style="padding-top: 10px;">
+                        <p style="margin-bottom: 20px;">Denne komponent har flere forgreninger. Hvilken vej vil du sy sammen med hovedstrengen?</p>
+                        <div style="display: flex; flex-direction: column; gap: 5px;">
+                            ${buttonsHtml}
+                            <button class="button secondary" style="margin-top: 10px;" onclick="document.body.removeChild(this.closest('.modal'));">
+                                Nej, annuller
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Global callback til at håndtere knap-tryk
+            window.__branchDeleteCallback = (selectedIndex) => {
+                deleteSystemComponent(id, selectedIndex);
+                recalculateSystem();
+                ui.updateUndoRedoUI(canUndo(), canRedo()); 
+                ui.showSaveStatus('Ændringer gemt', 'saved');
+                delete window.__branchDeleteCallback; // Ryd op
+            };
+
+            document.body.appendChild(overlay);
+
+        } else {
+            // Standard modal for almindelige kanaler (1 udgang eller blinde ender)
+            ui.showConfirm("Er du sikker på, at du vil slette denne komponent? Dette kan påvirke efterfølgende beregninger.", () => {
+                deleteSystemComponent(id);
+                recalculateSystem();
+                ui.updateUndoRedoUI(canUndo(), canRedo()); 
+                ui.showSaveStatus('Ændringer gemt', 'saved');
+            });
+        }
+    };
 
 window.handleEditComponent = (id) => {
     ui.showEditForm(id);
