@@ -44,6 +44,124 @@ window.highlightTableRow = function(id) {
     }
 };
 
+
+// --- 3D CONTEXT MENU (HUD / HOLOGRAM) ---
+window.show3DContextMenu = function(compId, mouseX, mouseY) {
+    // 1. Fjern eksisterende menu hvis den er åben
+    const existingMenu = document.getElementById('hudContextMenu');
+    if (existingMenu) existingMenu.remove();
+
+    const comp = window.stateManager.getSystemComponent(compId);
+    if (!comp) return;
+
+    // 2. Injicer CSS dynamisk (kun én gang) for at holde style.css "No Bloat"
+    if (!document.getElementById('hudMenuStyles')) {
+        const style = document.createElement('style');
+        style.id = 'hudMenuStyles';
+        style.innerHTML = `
+            #hudContextMenu {
+                position: fixed;
+                z-index: 3000;
+                background: rgba(15, 15, 26, 0.85); /* Dyb mørkblå transparant */
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                border: 1px solid var(--primary-neon-blue);
+                border-radius: 8px;
+                box-shadow: 0 0 15px rgba(0, 228, 255, 0.3), inset 0 0 20px rgba(0, 0, 0, 0.8);
+                width: 220px;
+                color: #fff;
+                font-family: 'Inter', sans-serif;
+                animation: hudFadeIn 0.15s ease-out forwards;
+                transform-origin: top left;
+            }
+            @keyframes hudFadeIn {
+                from { opacity: 0; transform: scale(0.9) translateY(-10px); }
+                to { opacity: 1; transform: scale(1) translateY(0); }
+            }
+            .hud-header {
+                padding: 10px 12px;
+                border-bottom: 1px solid rgba(0, 228, 255, 0.3);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                background: rgba(0, 228, 255, 0.1);
+                border-radius: 8px 8px 0 0;
+            }
+            .hud-header strong { font-size: 0.95rem; color: var(--primary-neon-blue); text-shadow: 0 0 5px var(--primary-neon-blue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;}
+            .hud-id { font-size: 0.7rem; color: var(--text-muted-color); }
+            .hud-stats { padding: 10px 12px; font-size: 0.85rem; display: flex; flex-direction: column; gap: 6px; }
+            .hud-stat { display: flex; align-items: center; gap: 8px; color: #ccc; }
+            .hud-stat span { color: var(--accent-neon-green); text-shadow: 0 0 3px var(--accent-neon-green); font-weight: bold; width: 15px; text-align: center; }
+            .hud-actions { display: flex; flex-direction: column; border-top: 1px solid rgba(255, 255, 255, 0.1); padding: 4px; }
+            .hud-actions button {
+                background: transparent; border: none; color: #ddd; padding: 8px 12px; text-align: left; font-size: 0.9rem; cursor: pointer; transition: all 0.2s; border-radius: 4px; display: flex; align-items: center; gap: 10px;
+            }
+            .hud-actions button:hover { background: rgba(255, 255, 255, 0.1); color: #fff; padding-left: 16px;}
+            .hud-actions button.hud-danger:hover { background: rgba(210, 33, 55, 0.2); color: #ff4444; }
+        `;
+        document.head.appendChild(style);
+    }
+
+    // 3. Byg HTML
+    const menu = document.createElement('div');
+    menu.id = 'hudContextMenu';
+    
+    const flow = comp.state?.airflow_in || comp.airflow || 0;
+    const pressure = comp.state?.pressureLoss || 0;
+    
+    // Gør ID kort og pænt til display
+    const shortId = compId.split('_')[1] || compId.substring(0,4);
+
+    menu.innerHTML = `
+        <div class="hud-header">
+            <strong>${comp.name}</strong>
+            <span class="hud-id">#${shortId}</span>
+        </div>
+        <div class="hud-stats">
+            <div class="hud-stat"><span>q</span> ${formatLocalFloat(flow, 0)} m³/h</div>
+            <div class="hud-stat"><span>Δp</span> ${formatLocalFloat(pressure, 2)} Pa</div>
+        </div>
+        <div class="hud-actions">
+            <button onclick="window.showSystemComponentDetails('${compId}'); document.getElementById('hudContextMenu').remove();">ⓘ Detaljer</button>
+            <button onclick="window.handleEditComponent('${compId}'); document.getElementById('hudContextMenu').remove();">✏️ Rediger</button>
+            <button class="hud-danger" onclick="window.handleDeleteComponent('${compId}'); document.getElementById('hudContextMenu').remove();">❌ Slet</button>
+        </div>
+    `;
+
+    document.body.appendChild(menu);
+
+    // 4. Positionering (kompenser for Desktop Scale)
+    const isDesktop = document.body.classList.contains('desktop-mode');
+    const scale = isDesktop ? 0.75 : 1;
+    let targetX = mouseX / scale;
+    let targetY = mouseY / scale;
+
+    const rect = menu.getBoundingClientRect();
+    const maxW = window.innerWidth / scale;
+    const maxH = window.innerHeight / scale;
+
+    // Skub op/til venstre, hvis den går ud over skærmen
+    if (targetX + rect.width > maxW) targetX = targetX - rect.width;
+    if (targetY + rect.height > maxH) targetY = targetY - rect.height;
+
+    menu.style.left = `${targetX}px`;
+    menu.style.top = `${targetY}px`;
+
+    // 5. Autoluk logik (Klikker du ved siden af, forsvinder den)
+    setTimeout(() => {
+        const closeMenu = (e) => {
+            if (!menu.contains(e.target)) {
+                menu.remove();
+                document.removeEventListener('click', closeMenu);
+                document.removeEventListener('contextmenu', closeMenu);
+            }
+        };
+        document.addEventListener('click', closeMenu);
+        document.addEventListener('contextmenu', closeMenu);
+    }, 10); // Lille timeout forhindrer at den lukker i samme millisekund, den åbner
+};
+
+
 // --- GLOBAL MOUSE TRACKER (Til flydende Desktop-menuer) ---
 window.lastMouseX = window.innerWidth / 2;
 window.lastMouseY = window.innerHeight / 2;
@@ -2110,5 +2228,11 @@ function validateTeeFlows(suffix, compId = null) {
     return true;
 }
 
+// --- Eksportér til det globale window-objekt så HTML 'onclick' virker ---
 window.showAddForm = showAddForm;
 window.handleInlineComponentTypeChange = handleInlineComponentTypeChange;
+window.showEditForm = showEditForm;
+window.handleEditComponent = showEditForm; // Alias så knappen inde i selve system-tabellen også virker
+window.showSystemComponentDetails = showSystemComponentDetails; // Gør 'Detaljer' knappen i HUD'en aktiv
+window.showDuctDetails = showDuctDetails;
+window.showFittingDetails = showFittingDetails;
