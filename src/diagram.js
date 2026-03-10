@@ -72,6 +72,10 @@ let labelsMap = new Map(); // Keep track of HTML labels
 let materialCache = {}; // Fast cache for materialer tværs af opdateringer
 let currentlyHighlightedMeshes = []; // Holder styr på oplyste meshes under Hover
 
+// 3D Akse indikator (HUD hjørne)
+let axesScene, axesCamera, axesRenderer;
+let labelX, labelY, labelZ;
+
 // --- HOVER LOGIK FRA TABEL ---
 window.highlight3DComponent = (id) => {
     if (!scene) return;
@@ -224,6 +228,8 @@ export function renderDiagram(keepControls = false) {
                     <option value="none" ${diagramSettings.labelMode === 'none' ? 'selected' : ''}>Tekst: Skjul</option>
                  </select>
             </div>
+            <!-- XYX Orientering HUD Container -->
+            <div id="diagramAxesContainer" style="position:absolute; top:130px; right:20px; width:80px; height:80px; z-index:90; pointer-events:none; display:none;"></div>
             <div id="diagramLegend" style="position:absolute; bottom:20px; left:20px; z-index:100; background:rgba(0,0,0,0.8); padding:10px; border-radius:8px; color:white; font-size: 0.8rem; display: none;">
             </div>
             <div id="diagramWebglContainer" style="width:100%; height:100%; min-height: 500px; background:#111;"></div>
@@ -252,11 +258,73 @@ export function renderDiagram(keepControls = false) {
         dirLight.position.set(1, 1, 1);
         scene.add(dirLight);
 
+        // -- Opsætning af XYZ HUD --
+        const axesContainer = document.getElementById('diagramAxesContainer');
+        if (axesContainer && !axesRenderer) {
+            axesScene = new THREE.Scene();
+            axesCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+            
+            axesRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            axesRenderer.setSize(80, 80);
+            axesContainer.appendChild(axesRenderer.domElement);
+
+            // Neon Farvede pile for den rigtige cyberpunk/CAD vibe
+            const arrowLen = 30;
+            const headLen = 10;
+            const headW = 6;
+            axesScene.add(new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), arrowLen, 0xFF0055, headLen, headW)); // X - Pink
+            axesScene.add(new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,0), arrowLen, 0x39FF14, headLen, headW)); // Y - Grøn
+            axesScene.add(new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0), arrowLen, 0x00E4FF, headLen, headW)); // Z - Blå
+
+            // Tekstlabels der flyder ovenpå
+            const createLabel = (txt, color) => {
+                const el = document.createElement('div');
+                el.innerText = txt;
+                el.style.position = 'absolute';
+                el.style.color = color;
+                el.style.fontSize = '12px';
+                el.style.fontFamily = 'monospace';
+                el.style.fontWeight = 'bold';
+                el.style.textShadow = '1px 1px 2px #000, -1px -1px 2px #000';
+                el.style.transform = 'translate(-50%, -50%)';
+                axesContainer.appendChild(el);
+                return el;
+            };
+            labelX = createLabel('X', '#FF0055');
+            labelY = createLabel('Y', '#39FF14');
+            labelZ = createLabel('Z', '#00E4FF');
+        }
+
         const animate = function () {
             requestAnimationFrame(animate);
             controls.update();
             renderer.render(scene, camera);
             updateLabels();
+
+            // Opdater XYZ HUD (Kun hvis synlig i Desktop Mode)
+            const isDesktopModeNow = document.body.classList.contains('desktop-mode');
+            const axesCont = document.getElementById('diagramAxesContainer');
+            if (axesCont) {
+                axesCont.style.display = isDesktopModeNow ? 'block' : 'none';
+            }
+
+            if (axesRenderer && axesScene && axesCamera && isDesktopModeNow) {
+                // Få akse-kameraet til at kigge på (0,0,0) fra samme relative vinkel som hovedkameraet
+                axesCamera.position.copy(camera.position).sub(controls.target);
+                axesCamera.position.setLength(100); // Lås afstanden
+                axesCamera.lookAt(axesScene.position);
+                axesRenderer.render(axesScene, axesCamera);
+
+                // Synkroniser HTML bogstavernes 2D position
+                const updateL = (lbl, vec) => {
+                    const v = vec.clone().project(axesCamera);
+                    lbl.style.left = `${(v.x * 0.5 + 0.5) * 80}px`;
+                    lbl.style.top = `${(v.y * -0.5 + 0.5) * 80}px`;
+                };
+                updateL(labelX, new THREE.Vector3(38, 0, 0));
+                updateL(labelY, new THREE.Vector3(0, 38, 0));
+                updateL(labelZ, new THREE.Vector3(0, 0, 38));
+            }
         };
         animate();
 
@@ -1147,7 +1215,7 @@ function updateLabels() {
 }
 
 export function zoomAllDiagram() {
-    if (!camera || !controls || !scene) return;
+    if (!camera || !controls || !scene || !renderer) return;
 
     const box = new THREE.Box3();
     scene.traverse((child) => {
@@ -1160,14 +1228,36 @@ export function zoomAllDiagram() {
 
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z, 20); 
+    
+    // Find den største dimension og brug den som en tilnærmet kugleradius
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const radius = maxDim / 2;
 
-    const fov = camera.fov * (Math.PI / 180);
-    let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+    // Beregn det vertikale og horisontale synsfelt (Field of View)
+    const fovY = camera.fov * (Math.PI / 180);
+    const fovX = 2 * Math.atan(Math.tan(fovY / 2) * camera.aspect);
 
-    camera.position.set(center.x + cameraZ * 0.8, center.y + cameraZ * 1.0, center.z + cameraZ * 0.8);
+    // Beregn hvor langt væk kameraet skal være for at hele radius passer i hhv. højde og bredde
+    const distY = radius / Math.sin(fovY / 2);
+    const distX = radius / Math.sin(fovX / 2);
+
+    // Vælg den strengeste afstand, så vi med sikkerhed får det hele med (uanset skærmformat)
+    let cameraDist = Math.max(distX, distY);
+
+    // Dynamisk padding baseret på tilstand (App vs. Desktop)
+    const isDesktop = document.body.classList.contains('desktop-mode');
+    
+    // I App-mode giver vi 60% ekstra luft (1.6), da flydende knapper og faner ofte dækker bunden.
+    // I Desktop-mode har vi et rent lærred og nøjes med 20% luft (1.2)
+    const padding = isDesktop ? 1.2 : 1.6; 
+
+    cameraDist *= padding;
+
+    // Sæt kameraet i en flot isometrisk vinkel i den beregnede afstand fra midten
+    const angleDir = new THREE.Vector3(0.8, 1.0, 0.8).normalize();
+    camera.position.copy(center).add(angleDir.multiplyScalar(cameraDist));
+    
     controls.target.copy(center);
-
     camera.lookAt(center);
     controls.update();
 }

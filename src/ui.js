@@ -44,6 +44,14 @@ window.highlightTableRow = function(id) {
     }
 };
 
+// NY FUNKTION: Nulstiller alle highlight-farver i tabellen manuelt
+window.clearTableHighlights = function() {
+    const rows = document.querySelectorAll('tr[data-comp-id]');
+    rows.forEach(row => {
+        row.style.backgroundColor = '';
+    });
+};
+
 
 // --- 3D CONTEXT MENU (HUD / HOLOGRAM) ---
 window.show3DContextMenu = function(compId, mouseX, mouseY) {
