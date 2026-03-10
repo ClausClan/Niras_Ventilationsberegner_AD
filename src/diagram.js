@@ -130,6 +130,9 @@ export function renderDiagram(keepControls = false) {
     const container = document.getElementById('systemDiagramContainer');
     if (!container) return;
 
+    // Tjekker om appen er i desktop-mode
+    const isDesktop = document.body.classList.contains('desktop-mode');
+
     // --- LORTR / PIRAMIDESTUB GEOMETRI GENERATOR ---
     function createTransitionGeometry(shape1, w1, h1, r1, shape2, w2, h2, r2, length_3d) {
         const segments = 64; 
@@ -317,8 +320,8 @@ export function renderDiagram(keepControls = false) {
                         if (window.highlightTableRow) {
                             window.highlightTableRow(compId); 
                         }
-                    } else if (e.button === 2) {
-                        // HØJREKLIK -> Vis HUD Hologram Menu
+                    } else if (e.button === 2 && document.body.classList.contains('desktop-mode')) {
+                        // HØJREKLIK -> Vis HUD Hologram Menu (Kun i Desktop Mode)
                         console.log(`🚀 [HUD] Bygger menu for: ${compId}`);
                         
                         // Ekstra liret effekt: Lys røret op og rul tabellen ned, når du højreklikker!
@@ -340,14 +343,13 @@ export function renderDiagram(keepControls = false) {
                         const airflow = comp.state?.airflow_in || comp.airflow || 0;
                         const shortId = compId.split('_')[1] || compId.substring(0,4);
 
-                        // Byg Split-knappen (Kun hvis det er en lige kanal)
+                        // --- Split funktion sat på pause: Stilet inaktivt ---
                         const splitBtnHtml = comp.type === 'straightDuct' 
-                            ? `<button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="console.log('Split funktionalitet kommer senere...'); document.getElementById('hudContextMenu').remove();">
+                            ? `<button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem; opacity: 0.3; pointer-events: none; filter: grayscale(1);">
                                    <span>✂️</span> Split kanal
                                </button>`
                             : '';
                             
-                        // Tjek om det er en lige kanal, og tilføj ekstra data-rækker
                         let extraDataHtml = '';
                         if (comp.type === 'straightDuct') {
                             const length = comp.properties?.length ? parseFloat(comp.properties.length).toFixed(2) : '-';
@@ -360,6 +362,7 @@ export function renderDiagram(keepControls = false) {
                         }
 
                         // Stramt, kompakt design via inline overrides
+                        // "Tilføj"-knappen er nu også gjort inaktiv
                         hudMenu.innerHTML = `
                             <div class="hud-header" style="font-size: 0.95rem; padding-bottom: 5px; margin-bottom: 5px;">
                                 <strong>${comp.name}</strong>
@@ -378,7 +381,7 @@ export function renderDiagram(keepControls = false) {
                                 <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.showEditForm('${compId}'); document.getElementById('hudContextMenu').remove();">
                                     <span>✏️</span> Rediger
                                 </button>
-                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.showAddForm('${compId}', 'outlet'); document.getElementById('hudContextMenu').remove();">
+                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem; opacity: 0.3; pointer-events: none; filter: grayscale(1);">
                                     <span>➕</span> Tilføj
                                 </button>
                                 ${splitBtnHtml}
@@ -387,7 +390,8 @@ export function renderDiagram(keepControls = false) {
 
                         document.body.appendChild(hudMenu);
 
-                        // 2. Positioner præcist ved musen (Body er ikke skaleret, så ingen math division er nødvendig her!)
+                        // 2. Positioner præcist ved musen. 
+                        // HUD er apppendet til body og har 'position: fixed', så den deler direkte vinduets koordinater uden skalering!
                         hudMenu.style.left = `${e.clientX}px`;
                         hudMenu.style.top = `${e.clientY}px`;
                         hudMenu.style.width = '200px'; // Gør menuen mere kompakt
@@ -842,23 +846,41 @@ export function renderDiagram(keepControls = false) {
                     const tOutRaw = comp.state?.temperature_out?.[portName] || comp.state?.temperature_in || 20;
                     const temp = parseFloat(tOutRaw);
                     const endText = isExhaust ? 'Udsugning' : 'Indblæsning';
+                    const safePortName = portName || 'outlet';
 
                     const div = document.createElement('div');
                     div.className = 'diagram-label end-label';
                     div.style.position = 'absolute';
                     div.style.color = '#00E4FF';
                     div.style.fontWeight = 'bold';
-                    div.style.background = 'rgba(0,0,0,0.6)';
-                    div.style.padding = '2px 6px';
-                    div.style.borderRadius = '4px';
+                    div.style.background = 'rgba(0,0,0,0.7)';
+                    div.style.padding = '4px 8px';
+                    div.style.borderRadius = '6px';
                     div.style.border = '1px solid #00E4FF';
                     div.style.fontSize = '11px';
+                    // Sørg for at den ydre div ignorerer musen, men at indholdet kan fanges
                     div.style.pointerEvents = 'none';
-                    div.style.whiteSpace = 'pre';
                     div.style.textAlign = 'center';
-                    div.innerText = `${endText}\n${flow} m³/h\n${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`;
+                    
+                    // Tilføjer kun knappen, hvis vi er i desktop mode
+                    const addButtonHtml = isDesktop 
+                        ? `<br><button class="add-btn-3d" 
+                                style="pointer-events: auto; cursor: pointer; margin-top: 6px; padding: 4px 8px; font-size: 14px; background: #00A4E0; color: #fff; border: none; border-radius: 4px; font-weight: bold; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;" 
+                                onpointerdown="event.stopPropagation();"
+                                onpointerup="event.stopPropagation();"
+                                onclick="event.stopPropagation(); window.showAddForm('${comp.id}', '${safePortName}');">
+                            +
+                        </button>`
+                        : '';
+                    
+                    div.innerHTML = `
+                        ${endText}<br>
+                        ${flow} m³/h<br>
+                        ${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}
+                        ${addButtonHtml}
+                    `;
                     labelsContainer.appendChild(div);
-                    labelsMap.set(div, pos.clone().add(dir.clone().multiplyScalar(arrowLength + 15)));
+                    labelsMap.set(div, pos.clone().add(dir.clone().multiplyScalar(arrowLength + 20)));
                 };
 
                 // Tegn Børn på Gren 1
@@ -993,23 +1015,40 @@ export function renderDiagram(keepControls = false) {
                 const temp = parseFloat(tOutRaw);
 
                 const endText = isExhaust ? 'Udsugning' : 'Indblæsning';
+                const safePortName = portName || 'outlet';
 
                 const div = document.createElement('div');
                 div.className = 'diagram-label end-label';
                 div.style.position = 'absolute';
                 div.style.color = '#00E4FF';
                 div.style.fontWeight = 'bold';
-                div.style.background = 'rgba(0,0,0,0.6)';
-                div.style.padding = '2px 6px';
-                div.style.borderRadius = '4px';
+                div.style.background = 'rgba(0,0,0,0.7)';
+                div.style.padding = '4px 8px';
+                div.style.borderRadius = '6px';
                 div.style.border = '1px solid #00E4FF';
                 div.style.fontSize = '11px';
-                div.style.pointerEvents = 'none';
-                div.style.whiteSpace = 'pre';
+                div.style.pointerEvents = 'none'; // Boksen skal ikke fange musen
                 div.style.textAlign = 'center';
-                div.innerText = `${endText}\n${flow} m³/h\n${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`;
+                
+                // Tilføjer kun knappen, hvis vi er i desktop mode
+                const addButtonHtml = isDesktop 
+                    ? `<br><button class="add-btn-3d" 
+                            style="pointer-events: auto; cursor: pointer; margin-top: 6px; padding: 4px 8px; font-size: 14px; background: #00A4E0; color: #fff; border: none; border-radius: 4px; font-weight: bold; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;" 
+                            onpointerdown="event.stopPropagation();"
+                            onpointerup="event.stopPropagation();"
+                            onclick="event.stopPropagation(); window.showAddForm('${comp.id}', '${safePortName}');">
+                        +
+                    </button>`
+                    : '';
+                
+                div.innerHTML = `
+                    ${endText}<br>
+                    ${flow} m³/h<br>
+                    ${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}
+                    ${addButtonHtml}
+                `;
                 labelsContainer.appendChild(div);
-                labelsMap.set(div, pos.clone().add(dir.clone().multiplyScalar(arrowLength + 15)));
+                labelsMap.set(div, pos.clone().add(dir.clone().multiplyScalar(arrowLength + 20)));
             };
 
             if (pType.includes('tee')) {
