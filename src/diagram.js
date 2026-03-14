@@ -4,29 +4,89 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 let diagramSettings = {
     colorMode: 'default',
-    labelMode: 'name',
+    labels: {
+        name: true,
+        dim: false,
+        flow: false,
+        vel: false,
+        press: false,
+        pam: false,
+        temp: false
+    },
+    textSettingsExpanded: false, 
+    effectsSettingsExpanded: false, // NY: Holder styr på om effekter er klappet ud
+    animateFlow: false,          
+    showInsulation: false,       
     threshold: 0
 };
 
-// Global update function
+// Global flow tekstur til animationsloopet
+let globalFlowTexture = null;
+
+// Global update function for checkboxes and selects
 window.updateDiagramSettings = () => {
-    const colorMode = document.getElementById('diagramColorMode').value;
-    const labelMode = document.getElementById('diagramLabelMode').value;
-    diagramSettings.colorMode = colorMode;
-    diagramSettings.labelMode = labelMode;
+    const colorMode = document.getElementById('diagramColorMode');
+    if (colorMode) diagramSettings.colorMode = colorMode.value;
+
+    const check = (id) => document.getElementById(id)?.checked || false;
+    
+    diagramSettings.labels.name = check('lbl_name');
+    diagramSettings.labels.dim = check('lbl_dim');
+    diagramSettings.labels.flow = check('lbl_flow');
+    diagramSettings.labels.vel = check('lbl_vel');
+    diagramSettings.labels.press = check('lbl_press');
+    diagramSettings.labels.pam = check('lbl_pam');
+    diagramSettings.labels.temp = check('lbl_temp');
+    
+    diagramSettings.animateFlow = check('chk_anim_flow');
+    diagramSettings.showInsulation = check('chk_show_iso');
+
+    const allChecked = Object.values(diagramSettings.labels).every(val => val);
+    const lblAll = document.getElementById('lbl_all');
+    if (lblAll) lblAll.checked = allChecked;
+
     renderDiagram(true);
+};
+
+window.toggleAllLabels = (checkbox) => {
+    const isChecked = checkbox.checked;
+    const cbList = ['lbl_name', 'lbl_dim', 'lbl_flow', 'lbl_vel', 'lbl_press', 'lbl_pam', 'lbl_temp'];
+    cbList.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.checked = isChecked;
+    });
+    window.updateDiagramSettings();
+};
+
+window.toggleTextSettings = () => {
+    diagramSettings.textSettingsExpanded = !diagramSettings.textSettingsExpanded;
+    const content = document.getElementById('textSettingsContent');
+    const icon = document.getElementById('textSettingsIcon');
+    if (content && icon) {
+        content.style.display = diagramSettings.textSettingsExpanded ? 'block' : 'none';
+        icon.innerText = diagramSettings.textSettingsExpanded ? '▼' : '▶';
+    }
+};
+
+window.toggleEffectsSettings = () => {
+    diagramSettings.effectsSettingsExpanded = !diagramSettings.effectsSettingsExpanded;
+    const content = document.getElementById('effectsSettingsContent');
+    const icon = document.getElementById('effectsSettingsIcon');
+    if (content && icon) {
+        content.style.display = diagramSettings.effectsSettingsExpanded ? 'block' : 'none';
+        icon.innerText = diagramSettings.effectsSettingsExpanded ? '▼' : '▶';
+    }
 };
 
 // Colors
 function getColorByValue(val, mode, min, max) {
-    if (mode === 'default') return 0x00E4FF; // Neon Blue Hex
+    if (mode === 'default' || mode === 'wireframe') return 0x00E4FF; 
 
     let range = max - min;
     if (range <= 0) range = 1;
     let t = Math.max(0, Math.min(1, (val - min) / range));
 
     let r, g, b;
-    // Temperature (Blue -> Green -> Yellow -> Red)
     if (mode === 'temperature') {
         if (t < 0.33) {
             const p = t / 0.33;
@@ -39,7 +99,6 @@ function getColorByValue(val, mode, min, max) {
             r = 255; g = Math.round(255 * (1 - p)); b = 0;
         }
     } else {
-        // Default Gradient for Pressure/Velocity (Blue -> Green -> Red)
         if (t < 0.5) {
             const p = t * 2;
             r = 0; g = Math.round(255 * p); b = Math.round(255 * (1 - p));
@@ -49,13 +108,12 @@ function getColorByValue(val, mode, min, max) {
         }
     }
 
-    // Convert RGB (0-255) to Hex Number
     return (r << 16) | (g << 8) | b;
 }
 
 function getColor(comp, mode, min, max) {
     if (mode === 'critical') {
-        return comp.state?.isCriticalPath ? 0xFF0055 : 0x3a7bd5; // Bright Magenta/Red vs Standard Blue
+        return comp.state?.isCriticalPath ? 0xFF0055 : 0x3a7bd5; 
     }
 
     let val = 0;
@@ -68,25 +126,33 @@ function getColor(comp, mode, min, max) {
 
 // Global 3D States
 let scene, camera, renderer, controls;
-let labelsMap = new Map(); // Keep track of HTML labels
-let materialCache = {}; // Fast cache for materialer tværs af opdateringer
-let currentlyHighlightedMeshes = []; // Holder styr på oplyste meshes under Hover
+let labelsMap = new Map(); 
+let materialCache = {}; 
+let currentlyHighlightedMeshes = []; 
 
-// 3D Akse indikator (HUD hjørne)
 let axesScene, axesCamera, axesRenderer;
 let labelX, labelY, labelZ;
 
-// --- HOVER LOGIK FRA TABEL ---
+// --- VISUEL FOKUS MODE (HOVER LOGIK) ---
 window.highlight3DComponent = (id) => {
     if (!scene) return;
-    window.reset3DHighlight(); // Ryd op i evt. tidligere highlights
+    window.reset3DHighlight(); 
     scene.traverse((child) => {
-        // Sikrer at vi sammenligner tekst mod tekst, da ID'er kan være tal i databasen!
-        if (child.isMesh && child.userData.compId != null && String(child.userData.compId) === String(id)) {
+        if (child.isMesh && child.userData.compId != null) {
             child.userData.originalMaterial = child.material;
-            child.material = child.material.clone(); // Klon materialet, så vi ikke maler alle rør grønne!
-            child.material.emissive.setHex(0x39FF14); // Neon Green glow
-            child.material.emissiveIntensity = 0.5;
+            child.material = child.material.clone(); 
+
+            if (String(child.userData.compId) === String(id)) {
+                child.material.emissive.setHex(0x39FF14); 
+                child.material.emissiveIntensity = 0.6;
+                child.material.transparent = false;
+                child.material.wireframe = false;
+                child.material.opacity = 1.0;
+            } else {
+                child.material.transparent = true;
+                child.material.opacity = 0.15;
+                child.material.wireframe = true;
+            }
             currentlyHighlightedMeshes.push(child);
         }
     });
@@ -95,7 +161,7 @@ window.highlight3DComponent = (id) => {
 window.reset3DHighlight = () => {
     currentlyHighlightedMeshes.forEach(mesh => {
         if (mesh.userData.originalMaterial) {
-            mesh.material.dispose(); // Ryd op i GPU-hukommelsen for det klonede materiale
+            mesh.material.dispose(); 
             mesh.material = mesh.userData.originalMaterial;
         }
     });
@@ -103,7 +169,6 @@ window.reset3DHighlight = () => {
 };
 
 
-// --- Toggle Diagram View ---
 export function toggleDiagramView() {
     const container = document.getElementById('systemDiagramContainer');
     const tableContainer = document.getElementById('systemComponentsContainer');
@@ -111,7 +176,6 @@ export function toggleDiagramView() {
     const toggleBtn = document.getElementById('toggleViewBtn');
     const diagControls = document.getElementById('diagramControls');
 
-    // Toggle active state on the diagram container
     container.classList.toggle('active');
 
     if (container.classList.contains('active')) {
@@ -134,10 +198,8 @@ export function renderDiagram(keepControls = false) {
     const container = document.getElementById('systemDiagramContainer');
     if (!container) return;
 
-    // Tjekker om appen er i desktop-mode
     const isDesktop = document.body.classList.contains('desktop-mode');
 
-    // --- LORTR / PIRAMIDESTUB GEOMETRI GENERATOR ---
     function createTransitionGeometry(shape1, w1, h1, r1, shape2, w2, h2, r2, length_3d) {
         const segments = 64; 
         const positions = [];
@@ -212,24 +274,76 @@ export function renderDiagram(keepControls = false) {
 
     if (!webglContainer || !renderer) {
         container.style.position = 'relative';
+        
         container.innerHTML = `
-            <div id="diagramOverlayControls" class="diagram-overlay-container" style="position:absolute; top:10px; right:10px; z-index:100; background:rgba(0,0,0,0.8); padding:8px; border-radius:8px; color:white; width:33%; max-width:200px;">
-                 <button class="button" style="width:100%; margin-bottom:8px; padding:4px; font-size:0.8rem; background:var(--primary-color); color:white; border:none; cursor:pointer;" onclick="window.zoomAllDiagram()"><i class="fas fa-expand"></i> Zoom Alt</button>
-                 <select id="diagramColorMode" class="input-field" style="width:100%;font-size:0.8rem; padding:4px;" onchange="window.updateDiagramSettings()">
-                    <option value="default" ${diagramSettings.colorMode === 'default' ? 'selected' : ''}>Farve: Standard</option>
-                    <option value="velocity" ${diagramSettings.colorMode === 'velocity' ? 'selected' : ''}>Farve: Hastighed</option>
-                    <option value="pressure" ${diagramSettings.colorMode === 'pressure' ? 'selected' : ''}>Farve: Tryktab</option>
-                    <option value="temperature" ${diagramSettings.colorMode === 'temperature' ? 'selected' : ''}>Farve: Temperatur</option>
-                    <option value="critical" ${diagramSettings.colorMode === 'critical' ? 'selected' : ''}>Farve: Kritisk Vej</option>
+            <div id="diagramOverlayControls" class="diagram-overlay-container" style="position:absolute; top:10px; right:10px; z-index:100; background:rgba(0,0,0,0.8); padding:10px; border-radius:8px; border:1px solid var(--border-color); color:white; width:33%; max-width:200px; box-sizing: border-box;">
+                 
+                 <button class="button secondary" style="width:100%; margin-bottom:12px; padding:6px; font-size:0.85rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.zoomAllDiagram()" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'"><i class="fas fa-expand"></i> Zoom Alt</button>
+                 
+                 <div style="font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; color: var(--text-muted-color); text-transform: uppercase; text-align: left;">Visualisering:</div>
+                 <select id="diagramColorMode" class="input-field" style="width:100%;font-size:0.8rem; padding:4px; margin-bottom: 12px; background: rgba(0,0,0,0.5); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; cursor: pointer;" onchange="window.updateDiagramSettings()">
+                    <option value="default" style="background: #111; color: white;" ${diagramSettings.colorMode === 'default' ? 'selected' : ''}>Standard</option>
+                    <option value="velocity" style="background: #111; color: white;" ${diagramSettings.colorMode === 'velocity' ? 'selected' : ''}>Hastighed (m/s)</option>
+                    <option value="pressure" style="background: #111; color: white;" ${diagramSettings.colorMode === 'pressure' ? 'selected' : ''}>Tryktab (Pa/m)</option>
+                    <option value="temperature" style="background: #111; color: white;" ${diagramSettings.colorMode === 'temperature' ? 'selected' : ''}>Temperatur (°C)</option>
+                    <option value="critical" style="background: #111; color: white;" ${diagramSettings.colorMode === 'critical' ? 'selected' : ''}>Kritisk Vej</option>
+                    <option value="wireframe" style="background: #111; color: white;" ${diagramSettings.colorMode === 'wireframe' ? 'selected' : ''}>Trådmodel (X-Ray)</option>
                  </select>
-                 <select id="diagramLabelMode" class="input-field" style="width:100%;font-size:0.8rem; padding:4px; margin-top:5px;" onchange="window.updateDiagramSettings()">
-                    <option value="name" ${diagramSettings.labelMode === 'name' ? 'selected' : ''}>Tekst: Navn</option>
-                    <option value="detailed" ${diagramSettings.labelMode === 'detailed' ? 'selected' : ''}>Tekst: Detaljer</option>
-                    <option value="none" ${diagramSettings.labelMode === 'none' ? 'selected' : ''}>Tekst: Skjul</option>
-                 </select>
+
+                 <!-- Foldbar Effekter -->
+                 <div style="margin-bottom: 12px;">
+                     <div style="font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; color: var(--text-muted-color); text-transform: uppercase; cursor: pointer; display: flex; justify-content: space-between; align-items: center; padding: 2px 0; text-align: left;" onclick="window.toggleEffectsSettings()">
+                        <span>Effekter</span>
+                        <span id="effectsSettingsIcon">${diagramSettings.effectsSettingsExpanded ? '▼' : '▶'}</span>
+                     </div>
+                     
+                     <div id="effectsSettingsContent" style="background: rgba(0,0,0,0.4); padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); display: ${diagramSettings.effectsSettingsExpanded ? 'block' : 'none'};">
+                         <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
+                            <input type="checkbox" id="chk_anim_flow" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.animateFlow ? 'checked' : ''}> Animeret Flow
+                         </label>
+                         <label style="display: flex; align-items: center; font-size: 0.75rem; cursor: pointer; color: white;">
+                            <input type="checkbox" id="chk_show_iso" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.showInsulation ? 'checked' : ''}> Vis Isolering
+                         </label>
+                     </div>
+                 </div>
+                 
+                 <!-- Foldbar Tekstvisning -->
+                 <div>
+                     <div style="font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; color: var(--text-muted-color); text-transform: uppercase; cursor: pointer; display: flex; justify-content: space-between; align-items: center; padding: 2px 0; text-align: left;" onclick="window.toggleTextSettings()">
+                        <span>Tekstvisning</span>
+                        <span id="textSettingsIcon">${diagramSettings.textSettingsExpanded ? '▼' : '▶'}</span>
+                     </div>
+                     
+                     <div id="textSettingsContent" style="background: rgba(0,0,0,0.4); padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); display: ${diagramSettings.textSettingsExpanded ? 'block' : 'none'};">
+                         <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
+                            <input type="checkbox" id="lbl_name" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.labels.name ? 'checked' : ''}> Navn
+                         </label>
+                         <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
+                            <input type="checkbox" id="lbl_dim" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.labels.dim ? 'checked' : ''}> Dimension
+                         </label>
+                         <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
+                            <input type="checkbox" id="lbl_flow" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.labels.flow ? 'checked' : ''}> Luftmængde
+                         </label>
+                         <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
+                            <input type="checkbox" id="lbl_vel" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.labels.vel ? 'checked' : ''}> Hastighed
+                         </label>
+                         <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
+                            <input type="checkbox" id="lbl_press" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.labels.press ? 'checked' : ''}> Total Tryktab (Pa)
+                         </label>
+                         <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
+                            <input type="checkbox" id="lbl_pam" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.labels.pam ? 'checked' : ''}> Tryktab (Pa/m)
+                         </label>
+                         <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
+                            <input type="checkbox" id="lbl_temp" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.labels.temp ? 'checked' : ''}> Temperatur
+                         </label>
+                         <div style="height: 1px; background: rgba(255,255,255,0.2); margin: 6px 0;"></div>
+                         <label style="display: flex; align-items: center; font-size: 0.75rem; cursor: pointer; color: white;">
+                            <input type="checkbox" id="lbl_all" style="margin-right: 6px; cursor: pointer;" onchange="window.toggleAllLabels(this)" ${Object.values(diagramSettings.labels).every(v=>v) ? 'checked' : ''}> <strong>Vis alt</strong>
+                         </label>
+                     </div>
+                 </div>
             </div>
-            <!-- XYX Orientering HUD Container -->
-            <div id="diagramAxesContainer" style="position:absolute; top:130px; right:20px; width:80px; height:80px; z-index:90; pointer-events:none; display:none;"></div>
+            <div id="diagramAxesContainer" style="position:absolute; bottom:20px; right:20px; width:80px; height:80px; z-index:90; pointer-events:none; display:none;"></div>
             <div id="diagramLegend" style="position:absolute; bottom:20px; left:20px; z-index:100; background:rgba(0,0,0,0.8); padding:10px; border-radius:8px; color:white; font-size: 0.8rem; display: none;">
             </div>
             <div id="diagramWebglContainer" style="width:100%; height:100%; min-height: 500px; background:#111;"></div>
@@ -268,7 +382,6 @@ export function renderDiagram(keepControls = false) {
             axesRenderer.setSize(80, 80);
             axesContainer.appendChild(axesRenderer.domElement);
 
-            // Neon Farvede pile for den rigtige cyberpunk/CAD vibe
             const arrowLen = 30;
             const headLen = 10;
             const headW = 6;
@@ -276,7 +389,6 @@ export function renderDiagram(keepControls = false) {
             axesScene.add(new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,0), arrowLen, 0x39FF14, headLen, headW)); // Y - Grøn
             axesScene.add(new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0), arrowLen, 0x00E4FF, headLen, headW)); // Z - Blå
 
-            // Tekstlabels der flyder ovenpå
             const createLabel = (txt, color) => {
                 const el = document.createElement('div');
                 el.innerText = txt;
@@ -301,7 +413,19 @@ export function renderDiagram(keepControls = false) {
             renderer.render(scene, camera);
             updateLabels();
 
-            // Opdater XYZ HUD (Kun hvis synlig i Desktop Mode)
+            // NYT: Animér det strømmende luft INDIVIDUELT baseret på hastighed!
+            if (diagramSettings.animateFlow) {
+                Object.values(materialCache).forEach(mat => {
+                    if (mat.emissiveMap && mat.userData && mat.userData.velocity !== undefined) {
+                        // Dynamisk Hastighed!
+                        // Før var multiplikatoren 0.004. Nu skruer vi op for at tydeliggøre forskel på lav og høj hastighed.
+                        const speed = 0.002 + (mat.userData.velocity * 0.012);
+                        mat.emissiveMap.offset.y -= speed;
+                        mat.emissiveMap.offset.x -= speed; 
+                    }
+                });
+            }
+
             const isDesktopModeNow = document.body.classList.contains('desktop-mode');
             const axesCont = document.getElementById('diagramAxesContainer');
             if (axesCont) {
@@ -309,13 +433,11 @@ export function renderDiagram(keepControls = false) {
             }
 
             if (axesRenderer && axesScene && axesCamera && isDesktopModeNow) {
-                // Få akse-kameraet til at kigge på (0,0,0) fra samme relative vinkel som hovedkameraet
                 axesCamera.position.copy(camera.position).sub(controls.target);
-                axesCamera.position.setLength(100); // Lås afstanden
+                axesCamera.position.setLength(100);
                 axesCamera.lookAt(axesScene.position);
                 axesRenderer.render(axesScene, axesCamera);
 
-                // Synkroniser HTML bogstavernes 2D position
                 const updateL = (lbl, vec) => {
                     const v = vec.clone().project(axesCamera);
                     lbl.style.left = `${(v.x * 0.5 + 0.5) * 80}px`;
@@ -336,7 +458,7 @@ export function renderDiagram(keepControls = false) {
             }
         });
 
-        // --- RAYCASTER EVENT LISTENERS MED SLADREHANK ---
+        // --- RAYCASTER ---
         const canvas = renderer.domElement; 
         let pointerDownPos = { x: 0, y: 0 };
         let isDragging = false;
@@ -350,17 +472,11 @@ export function renderDiagram(keepControls = false) {
         canvas.addEventListener('pointermove', (e) => {
             const dx = Math.abs(e.clientX - pointerDownPos.x);
             const dy = Math.abs(e.clientY - pointerDownPos.y);
-            if (dx > 5 || dy > 5) isDragging = true; // Beskytter mod at forveksle kameradrej med klik
+            if (dx > 5 || dy > 5) isDragging = true;
         });
         
-        // Fanger både Venstre (0) og Højre (2) klik præcist her!
         canvas.addEventListener('pointerup', (e) => {
-            if (isDragging) {
-                console.log("🖱️ [Raycaster] Ignorerede klik (brugeren trækker i kameraet).");
-                return; 
-            }
-
-            console.log(`🖱️ [Raycaster] Klik registreret. Knap: ${e.button === 0 ? 'Venstre' : (e.button === 2 ? 'Højre' : e.button)}`);
+            if (isDragging) return;
 
             const rect = canvas.getBoundingClientRect();
             const mouse = new THREE.Vector2();
@@ -370,48 +486,32 @@ export function renderDiagram(keepControls = false) {
             const raycaster = new THREE.Raycaster();
             raycaster.setFromCamera(mouse, camera);
 
-            // Tjek kun mod objekter vi har markeret som interaktive meshes
             const intersects = raycaster.intersectObjects(scene.children, true);
-            console.log(`🎯 [Raycaster] Strålen traf ${intersects.length} objekt(er).`);
-
-            let ramteGyldigtObjekt = false;
 
             for (let i = 0; i < intersects.length; i++) {
                 const obj = intersects[i].object;
                 if (obj.userData && obj.userData.compId != null) {
-                    ramteGyldigtObjekt = true;
                     const compId = String(obj.userData.compId);
-                    console.log(`✅ [Raycaster] Fandt komponent ID: ${compId}`);
                     
                     if (e.button === 0) {
-                        // VENSTREKLIK -> Highlight og scroll rækken i tabellen
-                        if (window.highlightTableRow) {
-                            window.highlightTableRow(compId); 
-                        }
+                        if (window.highlightTableRow) window.highlightTableRow(compId); 
                     } else if (e.button === 2 && document.body.classList.contains('desktop-mode')) {
-                        // HØJREKLIK -> Vis HUD Hologram Menu (Kun i Desktop Mode)
-                        console.log(`🚀 [HUD] Bygger menu for: ${compId}`);
-                        
-                        // Ekstra liret effekt: Lys røret op og rul tabellen ned, når du højreklikker!
                         if (window.highlightTableRow) window.highlightTableRow(compId);
                         if (window.highlight3DComponent) window.highlight3DComponent(compId);
 
-                        // 1. Byg HUD Menuen dynamisk!
                         let hudMenu = document.getElementById('hudContextMenu');
-                        if (hudMenu) hudMenu.remove(); // Slet eksisterende
+                        if (hudMenu) hudMenu.remove(); 
 
                         hudMenu = document.createElement('div');
                         hudMenu.id = 'hudContextMenu';
-                        hudMenu.className = 'hud-context-menu'; // Bruger klassen fra din style.css
+                        hudMenu.className = 'hud-context-menu'; 
                         
-                        // Hent komponent data via App State
                         const comp = window.stateManager ? window.stateManager.getSystemComponent(compId) : { name: "Ukendt", state: {} };
                         const velocity = comp.state?.velocity ? comp.state.velocity.toFixed(2) : '-';
                         const pressure = comp.state?.pressureLoss ? comp.state.pressureLoss.toFixed(2) : '-';
                         const airflow = comp.state?.airflow_in || comp.airflow || 0;
                         const shortId = compId.split('_')[1] || compId.substring(0,4);
 
-                        // --- Split funktion sat på pause: Stilet inaktivt ---
                         const splitBtnHtml = comp.type === 'straightDuct' 
                             ? `<button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem; opacity: 0.3; pointer-events: none; filter: grayscale(1);">
                                    <span>✂️</span> Split kanal
@@ -429,8 +529,6 @@ export function renderDiagram(keepControls = false) {
                             `;
                         }
 
-                        // Stramt, kompakt design via inline overrides
-                        // "Tilføj"-knappen er nu også gjort inaktiv
                         hudMenu.innerHTML = `
                             <div class="hud-header" style="font-size: 0.95rem; padding-bottom: 5px; margin-bottom: 5px;">
                                 <strong>${comp.name}</strong>
@@ -458,18 +556,14 @@ export function renderDiagram(keepControls = false) {
 
                         document.body.appendChild(hudMenu);
 
-                        // 2. Positioner præcist ved musen. 
-                        // HUD er apppendet til body og har 'position: fixed', så den deler direkte vinduets koordinater uden skalering!
                         hudMenu.style.left = `${e.clientX}px`;
                         hudMenu.style.top = `${e.clientY}px`;
-                        hudMenu.style.width = '200px'; // Gør menuen mere kompakt
+                        hudMenu.style.width = '200px'; 
                         
-                        // Lille forsinkelse for at CSS-animationen (scale) kicker ind
                         setTimeout(() => {
                             hudMenu.classList.add('active');
                         }, 10);
 
-                        // 3. Autoluk, hvis man klikker udenfor menuen
                         setTimeout(() => {
                             const closeMenu = (eClick) => {
                                 if (!hudMenu.contains(eClick.target)) {
@@ -483,22 +577,48 @@ export function renderDiagram(keepControls = false) {
                         }, 50);
 
                     }
-                    break; // Find kun det forreste objekt!
+                    break;
                 }
-            }
-
-            if (intersects.length > 0 && !ramteGyldigtObjekt) {
-                console.log("❌ [Raycaster] Ramte noget, men det var baggrundspynt uden compId (fx en pil eller grid).");
             }
         });
 
-        // Bloker browserens grimme standard-højreklik-menu på vores canvas
         canvas.addEventListener('contextmenu', (e) => {
             e.preventDefault(); 
         });
     }
+    
+    // Generer den basis-tekstur, vi vil klone
+    if (diagramSettings.animateFlow && !globalFlowTexture) {
+        const flowCanvas = document.createElement('canvas');
+        flowCanvas.width = 64;
+        flowCanvas.height = 64;
+        const ctx = flowCanvas.getContext('2d');
+        
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.beginPath();
+        ctx.moveTo(16, 48);
+        ctx.lineTo(32, 16);
+        ctx.lineTo(48, 48);
+        ctx.lineTo(32, 40);
+        ctx.fill();
+        
+        globalFlowTexture = new THREE.CanvasTexture(flowCanvas);
+        globalFlowTexture.wrapS = THREE.RepeatWrapping;
+        globalFlowTexture.wrapT = THREE.RepeatWrapping;
+        globalFlowTexture.repeat.set(2, 4); 
+    } else if (!diagramSettings.animateFlow && globalFlowTexture) {
+        globalFlowTexture.dispose();
+        globalFlowTexture = null;
+    }
 
-    // Ryd op i scene før re-render (inklusive evt. active hovers)
+    webglContainer = document.getElementById('diagramWebglContainer');
+    if (webglContainer && renderer && camera && webglContainer.clientWidth > 0 && webglContainer.clientHeight > 0) {
+        camera.aspect = webglContainer.clientWidth / webglContainer.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(webglContainer.clientWidth, webglContainer.clientHeight);
+    }
+
+    // RYDER OP (Husk at slette klonede teksturer)
     window.reset3DHighlight(); 
     for (let i = scene.children.length - 1; i >= 0; i--) {
         let obj = scene.children[i];
@@ -507,7 +627,8 @@ export function renderDiagram(keepControls = false) {
             if (obj.geometry) obj.geometry.dispose();
             if (obj.material) {
                 if (!Object.values(materialCache).includes(obj.material)) {
-                    if (obj.material.map) obj.material.map.dispose();
+                    if (obj.material.map && obj.material.map !== globalFlowTexture) obj.material.map.dispose();
+                    if (obj.material.emissiveMap && obj.material.emissiveMap !== globalFlowTexture) obj.material.emissiveMap.dispose();
                     obj.material.dispose();
                 }
             }
@@ -537,7 +658,7 @@ export function renderDiagram(keepControls = false) {
 
     const legendContainer = document.getElementById('diagramLegend');
     if (legendContainer) {
-        if (diagramSettings.colorMode === 'default') {
+        if (diagramSettings.colorMode === 'default' || diagramSettings.colorMode === 'wireframe') {
             legendContainer.style.display = 'none';
         } else if (diagramSettings.colorMode === 'critical') {
             legendContainer.style.display = 'block';
@@ -563,7 +684,7 @@ export function renderDiagram(keepControls = false) {
                 gradientCss = 'linear-gradient(to right, #0000FF, #00FF00, #FF0000)';
             } else if (diagramSettings.colorMode === 'pressure') {
                 title = 'Tryktab (Kanaler)';
-                unit = 'Pa';
+                unit = 'Pa/m';
                 gradientCss = 'linear-gradient(to right, #0000FF, #00FF00, #FF0000)';
             }
 
@@ -593,12 +714,18 @@ export function renderDiagram(keepControls = false) {
         return texture;
     };
 
+    // OPGRADERET: Grupperer materialer efter hastighed!
     const getMaterial = (comp, isIncluded) => {
         const mode = diagramSettings.colorMode;
         let colorHexStart = 0x777777;
         let colorHexEnd = 0x777777;
         let useGradient = false;
         let isGhosted = !isIncluded;
+        let isWireframe = false;
+        
+        const vel = comp.state?.velocity || 0;
+        // Skruer op for præcisionen (0.1 intervaller) for at animationen ikke samles i for brede kasser
+        const velKey = diagramSettings.animateFlow ? Math.round(vel * 10) : 0;
 
         if (isIncluded) {
             colorHexStart = getColor(comp, mode, currentMin, currentMax);
@@ -606,6 +733,8 @@ export function renderDiagram(keepControls = false) {
 
             if (mode === 'critical' && !comp.state?.isCriticalPath) {
                 isGhosted = true;
+            } else if (mode === 'wireframe') {
+                isWireframe = true;
             }
 
             if (mode === 'temperature' && comp.state?.temperature_in !== undefined) {
@@ -619,15 +748,20 @@ export function renderDiagram(keepControls = false) {
             }
         }
 
-        const key = `${colorHexStart}_${colorHexEnd}_${isGhosted}_${useGradient} `;
+        const key = `${colorHexStart}_${colorHexEnd}_${isGhosted}_${useGradient}_${isWireframe}_${diagramSettings.animateFlow}_${velKey}`;
+        
         if (!materialCache[key]) {
             const matParams = {
-                transparent: isGhosted,
-                opacity: isGhosted ? 0.5 : 1.0,
+                transparent: isGhosted || isWireframe,
+                opacity: isGhosted ? 0.3 : (isWireframe ? 0.2 : 1.0),
                 roughness: 0.3,
                 metalness: 0.1,
                 side: THREE.DoubleSide
             };
+            
+            if (isWireframe) {
+                matParams.wireframe = true;
+            }
 
             if (useGradient) {
                 matParams.map = createGradientTexture(colorHexStart, colorHexEnd);
@@ -635,7 +769,20 @@ export function renderDiagram(keepControls = false) {
             } else {
                 matParams.color = colorHexStart;
             }
-            materialCache[key] = new THREE.MeshStandardMaterial(matParams);
+            
+            // KLONER TEKSTUREN: Så hvert rør/hastighed kan rykkes uafhængigt
+            if (diagramSettings.animateFlow && globalFlowTexture) {
+                matParams.emissiveMap = globalFlowTexture.clone();
+                matParams.emissiveMap.needsUpdate = true;
+                matParams.emissive = new THREE.Color(0xffffff);
+                matParams.emissiveIntensity = 0.5;
+            }
+            
+            const newMat = new THREE.MeshStandardMaterial(matParams);
+            // Gem hastigheden i selve materialet, så animate() kender den!
+            newMat.userData = { velocity: vel }; 
+            
+            materialCache[key] = newMat;
         }
         return materialCache[key];
     };
@@ -651,16 +798,19 @@ export function renderDiagram(keepControls = false) {
         const baseMaterial = getMaterial(comp, isIncluded);
 
         let material = baseMaterial;
-        if (baseMaterial.map) {
+        
+        // Når vi tegner komponenten, roterer vi teksturen så den passer med komponenten
+        if (baseMaterial.map || baseMaterial.emissiveMap) {
             material = baseMaterial.clone();
-            material.map = baseMaterial.map.clone();
+            
+            if (baseMaterial.map) material.map = baseMaterial.map.clone();
+            if (baseMaterial.emissiveMap) material.emissiveMap = baseMaterial.emissiveMap; // Emissive deles per hastigheds-gruppe
+
             if (comp.type === 'straightDuct' || comp.type.includes('transition') || comp.type === 'expansion' || comp.type === 'contraction' || comp.type.includes('tee')) {
-                material.map.rotation = Math.PI / 2;
-                material.map.center.set(0.5, 0.5);
+                if (material.map) { material.map.rotation = Math.PI / 2; material.map.center.set(0.5, 0.5); }
             } else if (comp.type.startsWith('bend')) {
-                material.map.rotation = 0;
+                if (material.map) material.map.rotation = 0;
             }
-            material.map.needsUpdate = true;
         }
 
         let isRect = false;
@@ -693,6 +843,66 @@ export function renderDiagram(keepControls = false) {
 
         const pType = comp.fittingType || (comp.properties && comp.properties.type) || comp.type || '';
 
+        // --- UNIVERSEL ISOLERINGS FUNKTION (CAD EFFEKT) ---
+        const addInsulation = (baseMesh, geoType, params) => {
+            const isoMm = parseFloat(comp.properties?.isoThick || 0);
+            if (!diagramSettings.showInsulation || isoMm <= 0) return;
+            
+            const iso3D = (isoMm / 1000) * PIXELS_PER_METER;
+            let isoGeo;
+            
+            if (geoType === 'straight_cyl') {
+                isoGeo = new THREE.CylinderGeometry(params.r + iso3D, params.r + iso3D, params.len, 32);
+                isoGeo.translate(0, params.len / 2, 0);
+                isoGeo.rotateX(Math.PI / 2);
+            } else if (geoType === 'straight_box') {
+                isoGeo = new THREE.BoxGeometry(params.w + iso3D * 2, params.len, params.h + iso3D * 2);
+                isoGeo.translate(0, params.len / 2, 0);
+                isoGeo.rotateX(Math.PI / 2);
+            } else if (geoType === 'bend_tube') {
+                isoGeo = new THREE.TubeGeometry(params.curve, 20, params.r + iso3D, 16, false);
+            } else if (geoType === 'bend_rect') {
+                const rectShape = new THREE.Shape();
+                const w = params.w + iso3D * 2;
+                const h = params.h + iso3D * 2;
+                rectShape.moveTo(-w / 2, -h / 2);
+                rectShape.lineTo(w / 2, -h / 2);
+                rectShape.lineTo(w / 2, h / 2);
+                rectShape.lineTo(-w / 2, h / 2);
+                rectShape.lineTo(-w / 2, -h / 2);
+                isoGeo = new THREE.ExtrudeGeometry(rectShape, params.extrudeSettings);
+            } else if (geoType === 'transition') {
+                isoGeo = createTransitionGeometry(
+                    params.shape1, 
+                    params.w1 + (params.shape1==='rect'?iso3D*2:0), 
+                    params.h1 + (params.shape1==='rect'?iso3D*2:0), 
+                    params.r1 + iso3D,
+                    params.shape2, 
+                    params.w2 + (params.shape2==='rect'?iso3D*2:0), 
+                    params.h2 + (params.shape2==='rect'?iso3D*2:0), 
+                    params.r2 + iso3D, 
+                    params.len
+                );
+                isoGeo.translate(0, params.len / 2, 0);
+                isoGeo.rotateX(Math.PI / 2);
+            }
+
+            if (isoGeo) {
+                const isoMat = new THREE.MeshStandardMaterial({
+                    color: 0xE8F086, // Rockwool Gul farve
+                    transparent: true,
+                    opacity: 0.15,
+                    roughness: 0.9,
+                    depthWrite: false
+                });
+                const isoMesh = new THREE.Mesh(isoGeo, isoMat);
+                // Placer kassen præcis samme sted som originalen
+                isoMesh.position.copy(baseMesh.position);
+                isoMesh.quaternion.copy(baseMesh.quaternion);
+                scene.add(isoMesh);
+            }
+        };
+
         if (comp.type === 'straightDuct') {
             const len_m = comp.properties?.length || 1;
             moveDist = (len_m * PIXELS_PER_METER);
@@ -708,10 +918,14 @@ export function renderDiagram(keepControls = false) {
             geometry.rotateX(Math.PI / 2);
 
             const mesh = new THREE.Mesh(geometry, material);
-            mesh.userData.compId = comp.id; // Tag mesh for hover/click
+            mesh.userData.compId = comp.id; 
             mesh.position.copy(currentPos);
             mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
             scene.add(mesh);
+
+            // Tegn Isolering for lige rør
+            if (isRect) addInsulation(mesh, 'straight_box', {w: width3D, h: height3D, len: moveDist});
+            else addInsulation(mesh, 'straight_cyl', {r: radius3D, len: moveDist});
 
             nextPos.add(currentDir.clone().multiplyScalar(moveDist));
             midWay.copy(currentPos).add(currentDir.clone().multiplyScalar(moveDist / 2));
@@ -742,6 +956,7 @@ export function renderDiagram(keepControls = false) {
             const curve = new THREE.QuadraticBezierCurve3(currentPos, cornerPos, nextPos);
 
             let geometry;
+            let extrudeSettings;
             if (isRect) {
                 const rectShape = new THREE.Shape();
                 rectShape.moveTo(-width3D / 2, -height3D / 2);
@@ -750,19 +965,19 @@ export function renderDiagram(keepControls = false) {
                 rectShape.lineTo(-width3D / 2, height3D / 2);
                 rectShape.lineTo(-width3D / 2, -height3D / 2);
 
-                const extrudeSettings = {
-                    steps: 20,
-                    bevelEnabled: false,
-                    extrudePath: curve
-                };
+                extrudeSettings = { steps: 20, bevelEnabled: false, extrudePath: curve };
                 geometry = new THREE.ExtrudeGeometry(rectShape, extrudeSettings);
             } else {
                 geometry = new THREE.TubeGeometry(curve, 20, radius3D, 16, false);
             }
 
             const mesh = new THREE.Mesh(geometry, material);
-            mesh.userData.compId = comp.id; // Tag mesh for hover/click
+            mesh.userData.compId = comp.id; 
             scene.add(mesh);
+            
+            // Tegn isolering for bøjning
+            if (isRect) addInsulation(mesh, 'bend_rect', {w: width3D, h: height3D, extrudeSettings: extrudeSettings});
+            else addInsulation(mesh, 'bend_tube', {curve: curve, r: radius3D});
 
             midWay.copy(curve.getPoint(0.5));
             moveDist = cornerDist * 2;
@@ -826,10 +1041,13 @@ export function renderDiagram(keepControls = false) {
             geometry.rotateX(Math.PI / 2);
 
             const mesh = new THREE.Mesh(geometry, material);
-            mesh.userData.compId = comp.id; // Tag mesh for hover/click
+            mesh.userData.compId = comp.id; 
             mesh.position.copy(currentPos);
             mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
             scene.add(mesh);
+            
+            // Tegn Isolering for formovergange
+            addInsulation(mesh, 'transition', {shape1, w1, h1, r1, shape2, w2, h2, r2, len: moveDist});
 
             nextPos.add(currentDir.clone().multiplyScalar(moveDist));
             midWay.copy(currentPos).add(currentDir.clone().multiplyScalar(moveDist / 2));
@@ -850,7 +1068,6 @@ export function renderDiagram(keepControls = false) {
             const branchTurn = THREE.MathUtils.degToRad(90);
 
             if (isBullhead) {
-                // --- BULLHEAD TEGNELOGIK ---
                 const dIn = (comp.properties?.d_in || diameterMm) / 1000 * PIXELS_PER_METER;
                 const dOut1 = (comp.properties?.d_out1 || diameterMm) / 1000 * PIXELS_PER_METER;
                 const dOut2 = (comp.properties?.d_out2 || diameterMm) / 1000 * PIXELS_PER_METER;
@@ -858,7 +1075,6 @@ export function renderDiagram(keepControls = false) {
                 moveDist = Math.max(dIn * 2, 60);
                 const stubLen = moveDist / 2;
 
-                // Indløbs-stub
                 let gIn = new THREE.CylinderGeometry(dIn/2, dIn/2, stubLen, 32);
                 gIn.translate(0, stubLen/2, 0);
                 gIn.rotateX(Math.PI/2);
@@ -867,18 +1083,18 @@ export function renderDiagram(keepControls = false) {
                 meshIn.position.copy(currentPos);
                 meshIn.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
                 scene.add(meshIn);
+                
+                // Isolering Indløb
+                addInsulation(meshIn, 'straight_cyl', {r: dIn/2, len: stubLen});
 
                 const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
 
-                // Path 1 (F.eks. Venstre)
                 const path1Dir = currentDir.clone().applyAxisAngle(axis, branchTurn).normalize();
                 const path1Up = nextUp.clone().applyAxisAngle(axis, branchTurn).normalize();
                 
-                // Path 2 (F.eks. Højre)
                 const path2Dir = currentDir.clone().applyAxisAngle(axis, -branchTurn).normalize();
                 const path2Up = nextUp.clone().applyAxisAngle(axis, -branchTurn).normalize();
 
-                // Branch 1 Stub
                 let gB1 = new THREE.CylinderGeometry(dOut1/2, dOut1/2, stubLen, 32);
                 gB1.translate(0, stubLen/2, 0);
                 gB1.rotateX(Math.PI/2);
@@ -887,8 +1103,10 @@ export function renderDiagram(keepControls = false) {
                 meshB1.position.copy(midPos);
                 meshB1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path1Dir);
                 scene.add(meshB1);
+                
+                // Isolering Udløb 1
+                addInsulation(meshB1, 'straight_cyl', {r: dOut1/2, len: stubLen});
 
-                // Branch 2 Stub
                 let gB2 = new THREE.CylinderGeometry(dOut2/2, dOut2/2, stubLen, 32);
                 gB2.translate(0, stubLen/2, 0);
                 gB2.rotateX(Math.PI/2);
@@ -897,6 +1115,9 @@ export function renderDiagram(keepControls = false) {
                 meshB2.position.copy(midPos);
                 meshB2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path2Dir);
                 scene.add(meshB2);
+                
+                // Isolering Udløb 2
+                addInsulation(meshB2, 'straight_cyl', {r: dOut2/2, len: stubLen});
 
                 midWay.copy(midPos);
 
@@ -926,11 +1147,9 @@ export function renderDiagram(keepControls = false) {
                     div.style.borderRadius = '6px';
                     div.style.border = '1px solid #00E4FF';
                     div.style.fontSize = '11px';
-                    // Sørg for at den ydre div ignorerer musen, men at indholdet kan fanges
                     div.style.pointerEvents = 'none';
                     div.style.textAlign = 'center';
                     
-                    // Tilføjer kun knappen, hvis vi er i desktop mode
                     const addButtonHtml = isDesktop 
                         ? `<br><button class="add-btn-3d" 
                                 style="pointer-events: auto; cursor: pointer; margin-top: 6px; padding: 4px 8px; font-size: 14px; background: #00A4E0; color: #fff; border: none; border-radius: 4px; font-weight: bold; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;" 
@@ -941,23 +1160,23 @@ export function renderDiagram(keepControls = false) {
                         </button>`
                         : '';
                     
+                    let endTextLines = [endText];
+                    if (diagramSettings.labels.flow) endTextLines.push(`${flow} m³/h`);
+                    if (diagramSettings.labels.temp) endTextLines.push(`${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`);
+
                     div.innerHTML = `
-                        ${endText}<br>
-                        ${flow} m³/h<br>
-                        ${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}
+                        ${endTextLines.join('<br>')}
                         ${addButtonHtml}
                     `;
                     labelsContainer.appendChild(div);
                     labelsMap.set(div, pos.clone().add(dir.clone().multiplyScalar(arrowLength + 20)));
                 };
 
-                // Tegn Børn på Gren 1
                 const end1Pos = midPos.clone().add(path1Dir.clone().multiplyScalar(stubLen));
                 const c1 = comp.children && comp.children.outlet_path1 && comp.children.outlet_path1[0];
                 if (c1) drawTree3D(c1, end1Pos, path1Dir, path1Up);
                 else drawOpenEnd(end1Pos, path1Dir, 'outlet_path1');
 
-                // Tegn Børn på Gren 2
                 const end2Pos = midPos.clone().add(path2Dir.clone().multiplyScalar(stubLen));
                 const c2 = comp.children && comp.children.outlet_path2 && comp.children.outlet_path2[0];
                 if (c2) drawTree3D(c2, end2Pos, path2Dir, path2Up);
@@ -968,7 +1187,6 @@ export function renderDiagram(keepControls = false) {
                 bMax.max(currentPos); bMax.max(end1Pos); bMax.max(end2Pos);
                 return;
             } else {
-                // --- STANDARD T-STYKKE (Ligeud + 1 Afgrening) ---
                 branchDir = currentDir.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
                 branchUp = nextUp.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
 
@@ -992,6 +1210,10 @@ export function renderDiagram(keepControls = false) {
                 meshS.position.copy(currentPos);
                 meshS.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
                 scene.add(meshS);
+                
+                // Isolering Ligeud
+                if (isRect) addInsulation(meshS, 'straight_box', {w: width3D, h: height3D, len: moveDist});
+                else addInsulation(meshS, 'straight_cyl', {r: radius3D, len: moveDist});
 
                 const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
                 let gB;
@@ -1007,6 +1229,10 @@ export function renderDiagram(keepControls = false) {
                 meshB.position.copy(midPos);
                 meshB.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), branchDir);
                 scene.add(meshB);
+                
+                // Isolering Afgrening
+                if (isBranchRect) addInsulation(meshB, 'straight_box', {w: branchWidth, h: branchHeight, len: stubLen});
+                else addInsulation(meshB, 'straight_cyl', {r: branchRadius, len: stubLen});
 
                 nextPos.add(currentDir.clone().multiplyScalar(moveDist));
                 midWay.copy(midPos);
@@ -1021,37 +1247,75 @@ export function renderDiagram(keepControls = false) {
             m.position.copy(currentPos);
             m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
             scene.add(m);
+            
+            // Isolering ukendt form
+            addInsulation(m, 'straight_box', {w: radius3D * 2, h: radius3D * 2, len: moveDist});
 
             nextPos.add(currentDir.clone().multiplyScalar(moveDist));
             midWay.copy(currentPos).add(currentDir.clone().multiplyScalar(moveDist / 2));
         }
 
-        // --- Positions & Labels Funktion ---
+        // --- OPDATERET Positions & Labels Funktion med Checkbokse ---
         function drawLabels(compData, labelPosCenter, isIncl) {
-            if (diagramSettings.labelMode !== 'none') {
-                let txt = compData.name.split(' ')[0];
-                if (diagramSettings.labelMode === 'detailed') {
-                    const press = Math.round(compData.state?.pressureLoss || 0);
-                    const vel = (compData.state?.velocity || 0).toFixed(1);
-                    const flow = Math.round(compData.state?.airflow_in || 0);
-                    txt += ` (${flow}m³/h, ${vel}m/s, ${press}Pa)`;
-                }
-                if (!isIncl) txt += " (Deaktiveret)";
+            const showAny = Object.values(diagramSettings.labels).some(val => val);
+            if (!showAny && isIncl) return; 
 
-                const div = document.createElement('div');
-                div.className = 'diagram-label';
-                div.style.position = 'absolute';
-                div.style.color = '#fff';
-                div.style.textShadow = '0 0 3px #000';
-                div.style.fontSize = '11px';
-                div.style.pointerEvents = 'none';
-                div.innerText = txt;
-                labelsContainer.appendChild(div);
-                labelsMap.set(div, labelPosCenter);
+            let parts = [];
+
+            if (diagramSettings.labels.name) {
+                parts.push(compData.name.split(' ')[0]); 
             }
+            
+            const press = Math.round(compData.state?.pressureLoss || 0);
+            const pam = compData.type === 'straightDuct' ? (compData.state?.calculationDetails?.pressureDrop || 0).toFixed(2) : null;
+            const vel = (compData.state?.velocity || 0).toFixed(1);
+            const flow = Math.round(compData.state?.airflow_in || compData.airflow || 0);
+            const tOutRaw = compData.state?.temperature_out ? (compData.state.temperature_out['outlet'] || compData.state.temperature_out['outlet_straight'] || compData.state.temperature_out['outlet_path1']) : compData.state?.temperature_in;
+            const temp = tOutRaw ? parseFloat(tOutRaw).toFixed(1) : '-';
+            
+            let dimStr = '';
+            const dim = compData.state?.inletDimension;
+            if (dim) {
+                if (dim.shape === 'round' || dim.shape === 'circular') {
+                    dimStr = `Ø${Math.round(dim.d || dim.diameter)}`;
+                } else {
+                    dimStr = `${Math.round(dim.w || dim.sideB)}x${Math.round(dim.h || dim.sideA)}`;
+                }
+            }
+
+            let details = [];
+            if (diagramSettings.labels.dim && dimStr) details.push(dimStr);
+            if (diagramSettings.labels.flow) details.push(`${flow} m³/h`);
+            if (diagramSettings.labels.vel) details.push(`${vel} m/s`);
+            if (diagramSettings.labels.press) details.push(`${press} Pa`);
+            if (diagramSettings.labels.pam && pam !== null) details.push(`${pam} Pa/m`);
+            if (diagramSettings.labels.temp) details.push(`${temp} °C`);
+
+            let txt = parts.join(' ');
+            if (details.length > 0) {
+                if (txt) {
+                    txt += `\n(${details.join(', ')})`;
+                } else {
+                    txt = details.join(', ');
+                }
+            }
+
+            if (!isIncl) txt += (txt ? '\n' : '') + "(Deaktiveret)";
+            if (!txt) return;
+
+            const div = document.createElement('div');
+            div.className = 'diagram-label';
+            div.style.position = 'absolute';
+            div.style.color = '#fff';
+            div.style.textShadow = '0 0 3px #000';
+            div.style.fontSize = '11px';
+            div.style.pointerEvents = 'none';
+            div.style.textAlign = 'center';
+            div.innerText = txt;
+            labelsContainer.appendChild(div);
+            labelsMap.set(div, labelPosCenter);
         }
 
-        // Tegn standard labels for alle komponenter udover Bullhead
         if (pType !== 'tee_bullhead') {
             drawLabels(comp, midWay, isIncluded);
             bMin.min(currentPos); bMin.min(nextPos);
@@ -1095,10 +1359,9 @@ export function renderDiagram(keepControls = false) {
                 div.style.borderRadius = '6px';
                 div.style.border = '1px solid #00E4FF';
                 div.style.fontSize = '11px';
-                div.style.pointerEvents = 'none'; // Boksen skal ikke fange musen
+                div.style.pointerEvents = 'none';
                 div.style.textAlign = 'center';
                 
-                // Tilføjer kun knappen, hvis vi er i desktop mode
                 const addButtonHtml = isDesktop 
                     ? `<br><button class="add-btn-3d" 
                             style="pointer-events: auto; cursor: pointer; margin-top: 6px; padding: 4px 8px; font-size: 14px; background: #00A4E0; color: #fff; border: none; border-radius: 4px; font-weight: bold; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;" 
@@ -1109,10 +1372,12 @@ export function renderDiagram(keepControls = false) {
                     </button>`
                     : '';
                 
+                let endTextLines = [endText];
+                if (diagramSettings.labels.flow) endTextLines.push(`${flow} m³/h`);
+                if (diagramSettings.labels.temp) endTextLines.push(`${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`);
+
                 div.innerHTML = `
-                    ${endText}<br>
-                    ${flow} m³/h<br>
-                    ${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}
+                    ${endTextLines.join('<br>')}
                     ${addButtonHtml}
                 `;
                 labelsContainer.appendChild(div);
@@ -1138,26 +1403,24 @@ export function renderDiagram(keepControls = false) {
         }
     }
 
-const tree = stateManager.getSystemTree();
+    const tree = stateManager.getSystemTree();
     if (tree && tree.length > 0) {
         const startPos = new THREE.Vector3(0, 0, 0);
-        let startDir = new THREE.Vector3(1, 0, 0); // Default: Højre
+        let startDir = new THREE.Vector3(1, 0, 0);
         let startUp = new THREE.Vector3(0, 1, 0);
 
-        // Læs den valgte retning fra state og roter akserne!
         const sDir = fullState.startDirection || 'Right';
         if (sDir === 'Left') {
             startDir.set(-1, 0, 0);
         } else if (sDir === 'Up') {
             startDir.set(0, 1, 0);
-            startUp.set(-1, 0, 0); // Vigtigt for at undgå Gimbal Lock
+            startUp.set(-1, 0, 0);
         } else if (sDir === 'Down') {
             startDir.set(0, -1, 0);
             startUp.set(1, 0, 0);
         }
 
         const arrowDir = isExhaust ? startDir.clone().negate() : startDir;
-        // Justér pilens position dynamisk, så den altid peger ind i start-punktet
         const arrowStartPos = isExhaust ? startPos.clone() : startPos.clone().sub(startDir.clone().multiplyScalar(60));
         const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowStartPos, 60, 0x00E4FF, 15, 10);
         scene.add(arrowHelper);
@@ -1180,10 +1443,14 @@ const tree = stateManager.getSystemTree();
         div.style.pointerEvents = 'none';
         div.style.whiteSpace = 'pre';
         div.style.textAlign = 'center';
-        div.innerText = `${startText}\n${flow} m³/h\n${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`;
+        
+        let startTextLines = [startText];
+        if (diagramSettings.labels.flow) startTextLines.push(`${flow} m³/h`);
+        if (diagramSettings.labels.temp) startTextLines.push(`${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`);
+
+        div.innerHTML = startTextLines.join('<br>');
         labelsContainer.appendChild(div);
 
-        // Justér tekst-label position dynamisk bagved pilen
         const labelPos = isExhaust 
             ? startPos.clone().add(startDir.clone().multiplyScalar(75)) 
             : startPos.clone().sub(startDir.clone().multiplyScalar(75));
@@ -1191,7 +1458,6 @@ const tree = stateManager.getSystemTree();
 
         drawTree3D(tree[0], startPos, startDir, startUp);
     }
-
 
     if (!keepControls) {
         if (bMin.x !== Infinity) {
@@ -1234,6 +1500,13 @@ function updateLabels() {
 export function zoomAllDiagram() {
     if (!camera || !controls || !scene || !renderer) return;
 
+    const webglContainer = document.getElementById('diagramWebglContainer');
+    if (webglContainer && webglContainer.clientWidth > 0 && webglContainer.clientHeight > 0) {
+        camera.aspect = webglContainer.clientWidth / webglContainer.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(webglContainer.clientWidth, webglContainer.clientHeight);
+    }
+
     const box = new THREE.Box3();
     scene.traverse((child) => {
         if (child.isMesh) {
@@ -1246,31 +1519,22 @@ export function zoomAllDiagram() {
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     
-    // Find den største dimension og brug den som en tilnærmet kugleradius
     const maxDim = Math.max(size.x, size.y, size.z);
     const radius = maxDim / 2;
 
-    // Beregn det vertikale og horisontale synsfelt (Field of View)
     const fovY = camera.fov * (Math.PI / 180);
     const fovX = 2 * Math.atan(Math.tan(fovY / 2) * camera.aspect);
 
-    // Beregn hvor langt væk kameraet skal være for at hele radius passer i hhv. højde og bredde
     const distY = radius / Math.sin(fovY / 2);
     const distX = radius / Math.sin(fovX / 2);
 
-    // Vælg den strengeste afstand, så vi med sikkerhed får det hele med (uanset skærmformat)
     let cameraDist = Math.max(distX, distY);
 
-    // Dynamisk padding baseret på tilstand (App vs. Desktop)
     const isDesktop = document.body.classList.contains('desktop-mode');
-    
-    // I App-mode giver vi 60% ekstra luft (1.6), da flydende knapper og faner ofte dækker bunden.
-    // I Desktop-mode har vi et rent lærred og nøjes med 20% luft (1.2)
     const padding = isDesktop ? 1.2 : 1.6; 
 
     cameraDist *= padding;
 
-    // Sæt kameraet i en flot isometrisk vinkel i den beregnede afstand fra midten
     const angleDir = new THREE.Vector3(0.8, 1.0, 0.8).normalize();
     camera.position.copy(center).add(angleDir.multiplyScalar(cameraDist));
     
