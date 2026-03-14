@@ -1138,14 +1138,27 @@ export function renderDiagram(keepControls = false) {
         }
     }
 
-    const tree = stateManager.getSystemTree();
+const tree = stateManager.getSystemTree();
     if (tree && tree.length > 0) {
         const startPos = new THREE.Vector3(0, 0, 0);
-        const startDir = new THREE.Vector3(1, 0, 0);
-        const startUp = new THREE.Vector3(0, 1, 0);
+        let startDir = new THREE.Vector3(1, 0, 0); // Default: Højre
+        let startUp = new THREE.Vector3(0, 1, 0);
+
+        // Læs den valgte retning fra state og roter akserne!
+        const sDir = fullState.startDirection || 'Right';
+        if (sDir === 'Left') {
+            startDir.set(-1, 0, 0);
+        } else if (sDir === 'Up') {
+            startDir.set(0, 1, 0);
+            startUp.set(-1, 0, 0); // Vigtigt for at undgå Gimbal Lock
+        } else if (sDir === 'Down') {
+            startDir.set(0, -1, 0);
+            startUp.set(1, 0, 0);
+        }
 
         const arrowDir = isExhaust ? startDir.clone().negate() : startDir;
-        const arrowStartPos = isExhaust ? new THREE.Vector3(0, 0, 0) : new THREE.Vector3(-60, 0, 0);
+        // Justér pilens position dynamisk, så den altid peger ind i start-punktet
+        const arrowStartPos = isExhaust ? startPos.clone() : startPos.clone().sub(startDir.clone().multiplyScalar(60));
         const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowStartPos, 60, 0x00E4FF, 15, 10);
         scene.add(arrowHelper);
 
@@ -1170,11 +1183,15 @@ export function renderDiagram(keepControls = false) {
         div.innerText = `${startText}\n${flow} m³/h\n${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`;
         labelsContainer.appendChild(div);
 
-        const labelPos = isExhaust ? new THREE.Vector3(75, 0, 0) : new THREE.Vector3(-75, 0, 0);
+        // Justér tekst-label position dynamisk bagved pilen
+        const labelPos = isExhaust 
+            ? startPos.clone().add(startDir.clone().multiplyScalar(75)) 
+            : startPos.clone().sub(startDir.clone().multiplyScalar(75));
         labelsMap.set(div, labelPos);
 
         drawTree3D(tree[0], startPos, startDir, startUp);
     }
+
 
     if (!keepControls) {
         if (bMin.x !== Infinity) {

@@ -90,7 +90,8 @@ class StateManager {
             projectName: '',
             startAirflow: '1000',
             systemType: 'splitting',
-            temperature: '20'
+            temperature: '20',
+            startDirection: 'Right'
         };
     }
 

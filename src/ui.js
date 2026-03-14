@@ -454,9 +454,31 @@ export function renderSystem() {
             noteText = 'Systemet er tomt. Start ved den yderste gren og arbejd dig <strong>ind</strong> mod anlægget.';
         }
         
+        // Hent den valgte retning fra stateManager
+        const startDir = window.stateManager && window.stateManager.state ? window.stateManager.state.startDirection || 'Right' : 'Right';
+
+        // Hjælpefunktion til at style knapperne dynamisk (Neon glow hvis valgt)
+        const getArrowStyle = (dir) => {
+            if (startDir === dir) {
+                return `border: 1px solid var(--primary-neon-blue); box-shadow: inset 0 0 10px rgba(0, 228, 255, 0.4); background: rgba(0, 228, 255, 0.1); font-size: 1.5rem; width: 45px; height: 45px; border-radius: 8px; cursor: pointer; transition: all 0.2s;`;
+            }
+            return `border: 1px solid var(--border-color); background: transparent; font-size: 1.5rem; width: 45px; height: 45px; border-radius: 8px; cursor: pointer; opacity: 0.5; transition: all 0.2s;`;
+        };
+        
         systemComponentsContainer.innerHTML = `
             <div id="emptyStateButtonContainer" style="text-align:center; padding: 40px 20px; background: var(--input-bg-color); border: 2px dashed var(--border-color); border-radius: 8px; margin-top: 20px; margin-bottom: 20px;">
                 <p style="color: var(--text-muted-color); margin-bottom: 20px; font-size: 1.1em;">${noteText}</p>
+                
+                <div style="margin-bottom: 30px;">
+                    <p style="font-size: 0.85rem; font-weight: bold; color: var(--primary-color); margin-bottom: 12px;">Vælg anlæggets startretning i 3D:</p>
+                    <div style="display: flex; justify-content: center; gap: 15px;">
+                        <button type="button" style="${getArrowStyle('Left')}" onclick="window.setStartDirection('Left')" title="Venstre">⬅️</button>
+                        <button type="button" style="${getArrowStyle('Up')}" onclick="window.setStartDirection('Up')" title="Op">⬆️</button>
+                        <button type="button" style="${getArrowStyle('Down')}" onclick="window.setStartDirection('Down')" title="Ned">⬇️</button>
+                        <button type="button" style="${getArrowStyle('Right')}" onclick="window.setStartDirection('Right')" title="Højre">➡️</button>
+                    </div>
+                </div>
+
                 <button class="button primary" style="padding: 10px 24px; font-size: 1.1em;" onclick="window.showAddForm(null, null)">+ Tilføj første komponent</button>
             </div>
             <div class="table-responsive" style="width: 100%; overflow-x: auto; border: 1px solid var(--border-color); border-radius: 8px; display: none;" id="emptyTableWrap">
@@ -2235,6 +2257,20 @@ function validateTeeFlows(suffix, compId = null) {
 
     return true;
 }
+
+// NY FUNKTION: Håndterer klik på retningspilene i det tomme system
+window.setStartDirection = function(dir) {
+    if (window.stateManager) {
+        window.stateManager.setProjectParams({ startDirection: dir });
+        renderSystem(); // Genoptegner tabellen så den aktive pil lyser op
+        
+        // Opdater 3D live, hvis Desktop Mode er tændt
+        if (window.renderDiagram && document.body.classList.contains('desktop-mode')) {
+            window.renderDiagram(true); 
+        }
+    }
+};
+
 
 // --- Eksportér til det globale window-objekt så HTML 'onclick' virker ---
 window.showAddForm = showAddForm;
