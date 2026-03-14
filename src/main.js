@@ -35,6 +35,8 @@ window.resetFittings = () => { resetFittings(); ui.renderFittingsResult(); };
 // --- Undo/Redo Logic ---
 function handleUndo() {
     if (undo()) {
+        // Tving en fuld genberegning og 3D-opdatering, når vi fortryder
+        if (typeof window.recalculateSystem === 'function') window.recalculateSystem();
         ui.renderSystem();
         ui.handleComponentTypeChange();
         ui.updateUndoRedoUI(canUndo(), canRedo());
@@ -43,6 +45,8 @@ function handleUndo() {
 
 function handleRedo() {
     if (redo()) {
+        // Tving en fuld genberegning og 3D-opdatering, når vi gendanner
+        if (typeof window.recalculateSystem === 'function') window.recalculateSystem();
         ui.renderSystem();
         ui.handleComponentTypeChange();
         ui.updateUndoRedoUI(canUndo(), canRedo());
@@ -1792,7 +1796,7 @@ async function initializeApp() {
     const undoBtn = document.getElementById('undoButton');
     const redoBtn = document.getElementById('redoButton');
     if (undoBtn) undoBtn.addEventListener('click', handleUndo);
-    if (redoBtn) undoBtn.addEventListener('click', handleRedo);
+    if (redoBtn) redoBtn.addEventListener('click', handleRedo);
 
     ui.updateUndoRedoUI(canUndo(), canRedo());
 
