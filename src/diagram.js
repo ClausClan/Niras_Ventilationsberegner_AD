@@ -11,7 +11,8 @@ let diagramSettings = {
         vel: false,
         press: false,
         pam: false,
-        temp: false
+        temp: false,
+        isoMm: false
     },
     textSettingsExpanded: false, 
     effectsSettingsExpanded: false, // NY: Holder styr på om effekter er klappet ud
@@ -37,7 +38,8 @@ window.updateDiagramSettings = () => {
     diagramSettings.labels.press = check('lbl_press');
     diagramSettings.labels.pam = check('lbl_pam');
     diagramSettings.labels.temp = check('lbl_temp');
-    
+    diagramSettings.labels.isoMm = check('lbl_isoMm');
+
     diagramSettings.animateFlow = check('chk_anim_flow');
     diagramSettings.showInsulation = check('chk_show_iso');
 
@@ -335,6 +337,9 @@ export function renderDiagram(keepControls = false) {
                          </label>
                          <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
                             <input type="checkbox" id="lbl_temp" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.labels.temp ? 'checked' : ''}> Temperatur
+                         </label>
+                        <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
+                            <input type="checkbox" id="lbl_isoMm" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.labels.isoMm ? 'checked' : ''}> Isolering (mm)
                          </label>
                          <div style="height: 1px; background: rgba(255,255,255,0.2); margin: 6px 0;"></div>
                          <label style="display: flex; align-items: center; font-size: 0.75rem; cursor: pointer; color: white;">
@@ -889,9 +894,9 @@ export function renderDiagram(keepControls = false) {
 
             if (isoGeo) {
                 const isoMat = new THREE.MeshStandardMaterial({
-                    color: 0xE8F086, // Rockwool Gul farve
+                    color: 0xE8F086, // isolering Gul farve
                     transparent: true,
-                    opacity: 0.15,
+                    opacity: 0.30,
                     roughness: 0.9,
                     depthWrite: false
                 });
@@ -1272,6 +1277,7 @@ export function renderDiagram(keepControls = false) {
             const flow = Math.round(compData.state?.airflow_in || compData.airflow || 0);
             const tOutRaw = compData.state?.temperature_out ? (compData.state.temperature_out['outlet'] || compData.state.temperature_out['outlet_straight'] || compData.state.temperature_out['outlet_path1']) : compData.state?.temperature_in;
             const temp = tOutRaw ? parseFloat(tOutRaw).toFixed(1) : '-';
+            const isoMm = compData.properties?.isoThick ? parseFloat(compData.properties.isoThick) : 0;
             
             let dimStr = '';
             const dim = compData.state?.inletDimension;
@@ -1290,6 +1296,7 @@ export function renderDiagram(keepControls = false) {
             if (diagramSettings.labels.press) details.push(`${press} Pa`);
             if (diagramSettings.labels.pam && pam !== null) details.push(`${pam} Pa/m`);
             if (diagramSettings.labels.temp) details.push(`${temp} °C`);
+            if (diagramSettings.labels.isoMm && isoMm > 0) details.push(`${isoMm} mm iso`);
 
             let txt = parts.join(' ');
             if (details.length > 0) {
