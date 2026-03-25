@@ -1135,7 +1135,17 @@ function recalculateSystem() {
 
     stateManager.clearSystem();
 
+    // --- NYT: Sikkerhed mod cirkulære referencer (Forhindrer Call Stack Error) ---
+    const visitedNodesCalc = new Set();
+
     function traverseAndCalculate(nodeId, incomingFlow, incomingTemp, incomingDim, parentId, parentPort) {
+        // Stopper øjeblikkeligt uendelige loops
+        if (visitedNodesCalc.has(nodeId)) {
+            console.error(`[Fysik-Motor] Cirkulær reference opdaget ved node: ${nodeId}. Afbryder for at beskytte browseren!`);
+            return;
+        }
+        visitedNodesCalc.add(nodeId);
+
         const comp = userNodes[nodeId];
         if (!comp) return;
 
@@ -1199,7 +1209,16 @@ function recalculateSystem() {
         traverseAndCalculate(rootId, startAirflow, temp, null, null, null);
     });
 
+    // --- NYT: Sikkerhed mod cirkulære referencer i Termodynamik ---
+    const visitedNodesThermo = new Set();
+
     function traverseAndCalculateThermodynamics(nodeId, incomingTemp) {
+        // Stopper øjeblikkeligt uendelige loops i temperatur-beregningen
+        if (visitedNodesThermo.has(nodeId)) {
+            return incomingTemp;
+        }
+        visitedNodesThermo.add(nodeId);
+
         const comp = getSystemComponent(nodeId);
         if (!comp || !comp.state) return incomingTemp;
 
@@ -1397,10 +1416,9 @@ function recalculateSystem() {
     const isDesktop = document.body.classList.contains('desktop-mode');
     const isDiagActive = diagContainer && diagContainer.classList.contains('active');
     
-    // Opdater kun 3D hvis det faktisk er synligt for brugeren (sparer strøm)
     if (isDesktop || isDiagActive) {
         if (window.renderDiagram) {
-            window.renderDiagram(true); // true = behold kameravinkel
+            window.renderDiagram(true); 
         }
     }
 }
