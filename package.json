@@ -1,7 +1,7 @@
 {
   "name": "niras-ventilationsberegner",
   "private": true,
-  "version": "3beta",
+  "version": "0.14.4beta",
   "type": "module",
   "scripts": {
     "dev": "vite",
