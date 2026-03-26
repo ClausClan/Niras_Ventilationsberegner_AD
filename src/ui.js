@@ -347,14 +347,28 @@ export function getSystemFormHtml() {
                         <input type="text" id="projectName" class="input-field" placeholder="f.eks. Ombygning af kontor, etage 3">
                     </div>
                     
-                    <div class="input-group">
+                    <!-- GLOBAL SYSTEM INDSTILLINGER (Trin 8 Flex Container) -->
+                    <div style="display: flex; gap: 20px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 15px;">
+                        
+                        <!-- Eksisterende Systemtype -->
+                        <div class="input-group" style="margin-bottom: 0;">
                             <label>Systemtype</label>
                             <div id="globalSystemTypeGroup" class="radio-group"> 
-                                <input type="radio" id="sysTypeSupply" name="systemFlowType" value="splitting" checked><label for="sysTypeSupply">Indblæsning</label> 
-                                <input type="radio" id="sysTypeExhaust" name="systemFlowType" value="merging"><label for="sysTypeExhaust">Udsugning</label> 
+                                <input type="radio" id="sysTypeSupply" name="systemFlowType" value="splitting" checked onchange="window.recalculateSystem()"><label for="sysTypeSupply">Indblæsning</label> 
+                                <input type="radio" id="sysTypeExhaust" name="systemFlowType" value="merging" onchange="window.recalculateSystem()"><label for="sysTypeExhaust">Udsugning</label> 
                             </div>
+                        </div>
+
+                        <!-- NY: Arbejdsmetode (Top-Down / Bottom-Up) -->
+                        <div class="input-group" style="margin-bottom: 0;">
+                            <label>Arbejdsmetode</label>
+                            <div id="globalCalcModeGroup" class="radio-group"> 
+                                <input type="radio" id="calcModeTopDown" name="calculationMode" value="top-down" checked onchange="window.toggleCalculationMode(this.value)"><label for="calcModeTopDown">Top-Down (Anlæg)</label> 
+                                <input type="radio" id="calcModeBottomUp" name="calculationMode" value="bottom-up" onchange="window.toggleCalculationMode(this.value)"><label for="calcModeBottomUp">Bottom-Up (Armatur)</label> 
+                            </div>
+                        </div>
+                        
                     </div>
-                    
                     <div class="input-group">
                             <label for="system_airflow">Start luftmængde</label>
                             <div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="system_airflow" class="input-field" required></div>
@@ -681,6 +695,9 @@ export function renderSystem() {
             } else {
                 expectedPorts = ['outlet_branch', 'outlet_straight'];
             }
+        } else if (c.type === 'terminalUnit') {
+            // --- Armaturer har INGEN udgange (Leaf nodes) ---
+            expectedPorts = [];
         }
 
         // Hvis grenen er klappet sammen, springer vi over at tegne dens børn (og dens "Tilføj"-knapper)
@@ -1119,6 +1136,9 @@ export function printDocumentation(event) {
             } else {
                 expectedPorts = ['outlet_branch', 'outlet_straight'];
             }
+        } else if (c.type === 'terminalUnit') {
+            // --- NYT: TRIN 8 - Armaturer er "Leaf Nodes", de har ingen udgange! ---
+            expectedPorts = [];
         }
 
         // I udskriften tegner vi altid det fulde træ, uanset om det er foldet ind i UI'et
@@ -1576,6 +1596,7 @@ export function renderFittingInputs() {
             updateGeoInput();
         }
     }
+    
 }
 
 export function handleComponentTypeChange() {
@@ -1606,7 +1627,38 @@ export function handleComponentTypeChange() {
             <div id="systemFittingInputsContainer"></div>`;
 
         document.getElementById('systemFittingType').addEventListener('change', () => renderSystemFittingInputs());
-
+    } else if (type === 'terminalUnit') {
+        // --- NYT: ARMATUR / TERMINAL UNIT (Trin 8) ---
+        html = `
+            <div class="form-group">
+                <label>Navn / Reference</label>
+                <input type="text" id="sys_term_name" class="input-field" placeholder="f.eks. Rist Kontor 1">
+            </div>
+            <div class="form-group row">
+                <div class="col">
+                    <label>Luftmængde (m³/h)</label>
+                    <input type="number" id="sys_term_flow" class="input-field" value="150" step="5" min="0">
+                </div>
+                <div class="col">
+                    <label>Tryktab (Pa)</label>
+                    <input type="number" id="sys_term_dp" class="input-field" value="30" step="1" min="0">
+                </div>
+            </div>
+            <div class="form-group row">
+                <div class="col">
+                    <label>Tilslutning (Ø mm)</label>
+                    <input type="number" id="sys_term_dim" class="input-field" value="125" step="1" min="10">
+                </div>
+                <div class="col">
+                    <label>Strømningsretning</label>
+                    <select id="sys_term_dir" class="input-field">
+                        <option value="auto" selected>Auto (Følg anlæg)</option>
+                        <option value="supply">Indblæsning</option>
+                        <option value="extract">Udsugning</option>
+                    </select>
+                </div>
+            </div>
+        `;
     } else if (type === 'manualLoss') {
         systemComponentInputsContainer.innerHTML = `
             <div class="input-group"><label for="manualPressureLoss">Tryktab</label><div class="input-unit-wrapper" data-unit="Pa"><input type="text" id="manualPressureLoss" class="input-field" required></div></div>
@@ -1947,15 +1999,51 @@ export function showEditForm(id) {
     const container = document.getElementById(containerId);
     const pType = component.fittingType || (component.properties && component.properties.type) || component.type || '';
 
+    // RENSKREVET: IF/ELSE BLOK UDEN DUPLIKATIONER
     if (component.type === 'straightDuct') {
         renderSystemDuctInputs(container, component);
     } else if (component.type === 'fitting' || pType.startsWith('bend') || pType.startsWith('tee') || pType.startsWith('expansion') || pType.startsWith('contraction') || pType.startsWith('transition')) {
         renderSystemFittingInputs(container, component);
-    } else if (component.type === 'manualLoss') {
+    } else if (component.type === 'terminalUnit') {
+        // --- Byg og præ-udfyld formular til redigering af armatur ---
+        const p = component.properties || {};
         container.innerHTML = `
-            <div class="input-group"><label for="manualPressureLoss${suffix}">Tryktab</label><div class="input-unit-wrapper" data-unit="Pa"><input type="text" id="manualPressureLoss${suffix}" class="input-field" value="${component.pressureLoss}" required></div></div>
-            <div class="input-group"><label for="manualDescription${suffix}">Beskrivelse</label><input type="text" id="manualDescription${suffix}" class="input-field" value="${component.name}" placeholder="f.eks. Spjæld, rist, filter"></div>
-            <button type="button" class="button primary" onclick="window.handleUpdateComponent('${component.id}')">Opdater komponent</button>`;
+            <div class="form-group">
+                <label>Navn / Reference</label>
+                <input type="text" id="sys_term_name${suffix}" class="input-field" value="${component.name || ''}" placeholder="f.eks. Rist Kontor 1">
+            </div>
+            <div class="form-group row">
+                <div class="col">
+                    <label>Luftmængde (m³/h)</label>
+                    <input type="number" id="sys_term_flow${suffix}" class="input-field" value="${p.q_room || 150}" step="5" min="0">
+                </div>
+                <div class="col">
+                    <label>Tryktab (Pa)</label>
+                    <input type="number" id="sys_term_dp${suffix}" class="input-field" value="${p.pressureLoss || 30}" step="1" min="0">
+                </div>
+            </div>
+            <div class="form-group row">
+                <div class="col">
+                    <label>Tilslutning (Ø mm)</label>
+                    <input type="number" id="sys_term_dim${suffix}" class="input-field" value="${p.diameter || 125}" step="1" min="10">
+                </div>
+                <div class="col">
+                    <label>Strømningsretning</label>
+                    <select id="sys_term_dir${suffix}" class="input-field">
+                        <option value="auto" ${p.direction === 'auto' ? 'selected' : ''}>Auto (Følg anlæg)</option>
+                        <option value="supply" ${p.direction === 'supply' ? 'selected' : ''}>Indblæsning</option>
+                        <option value="extract" ${p.direction === 'extract' ? 'selected' : ''}>Udsugning</option>
+                    </select>
+                </div>
+            </div>
+            <button type="button" class="button primary" onclick="window.handleUpdateComponent('${component.id}')">Opdater komponent</button>
+        `;
+    } else if (component.type === 'manualLoss') {
+            const pLoss = component.properties && component.properties.pressureLoss !== undefined ? component.properties.pressureLoss : '';
+            container.innerHTML = `
+                <div class="input-group"><label for="manualPressureLoss${suffix}">Tryktab</label><div class="input-unit-wrapper" data-unit="Pa"><input type="text" id="manualPressureLoss${suffix}" class="input-field" value="${pLoss}" required></div></div>
+                <div class="input-group"><label for="manualDescription${suffix}">Beskrivelse</label><input type="text" id="manualDescription${suffix}" class="input-field" value="${component.name}" placeholder="f.eks. Spjæld, rist, filter"></div>
+                <button type="button" class="button primary" onclick="window.handleUpdateComponent('${component.id}')">Opdater komponent</button>`;
     } else {
         container.innerHTML = 'Redigering ikke understøttet for denne type endnu.';
     }
@@ -2044,36 +2132,37 @@ export function showAddForm(parentId, parentPort) {
     }
 
     const containerId = `add_container_${parentId || 'root'}_${parentPort || 'root'}`;
-    formWrapper.innerHTML = `
-        <div class="form-header-drag" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color);">
-            <h4 style="margin:0; color: var(--primary-color); pointer-events:none;">Tilføj komponent <br><small style="color:var(--text-muted-color); font-weight:normal; font-size:0.85rem;">Efter: ${contextText}</small></h4>
-            <button class="button secondary" style="padding:4px 12px; width:auto; margin:0;" onclick="
-                this.closest('.inline-form-wrapper').remove(); 
-                const emptyBtn = document.getElementById('emptyStateButtonContainer');
-                if (emptyBtn && !window.stateManager.getSystemComponents().length) {
-                    emptyBtn.style.display='';
-                    const emptyTableWrap = document.getElementById('emptyTableWrap');
-                    if (emptyTableWrap) emptyTableWrap.style.display='none';
-                }
-                window.currentAddParentId = null;
-                window.currentAddParentPort = null;
-                window.currentParentDim = null;
-                window.currentParentProps = null;
-            ">Annuller & Luk</button>
-        </div>
-        
-        <div class="input-group" style="margin-top: 10px;">
-            <label for="inlineComponentType">Komponenttype</label>
-            <select id="inlineComponentType" class="input-field" onchange="window.handleInlineComponentTypeChange('${containerId}')">
-                <option value="">-- Vælg type --</option>
-                <option value="straightDuct">Kanal</option>
-                <option value="fitting">Formstykke</option>
-                <option value="manualLoss">Manuelt tab</option>
-            </select>
-        </div>
-        <input type="hidden" id="systemComponentType" value="straightDuct">
-        <div id="${containerId}"></div>
-    `;
+        formWrapper.innerHTML = `
+            <div class="form-header-drag" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color);">
+                <h4 style="margin:0; color: var(--primary-color); pointer-events:none;">Tilføj komponent <br><small style="color:var(--text-muted-color); font-weight:normal; font-size:0.85rem;">Efter: ${contextText}</small></h4>
+                <button class="button secondary" style="padding:4px 12px; width:auto; margin:0;" onclick="
+                    this.closest('.inline-form-wrapper').remove(); 
+                    const emptyBtn = document.getElementById('emptyStateButtonContainer');
+                    if (emptyBtn && !window.stateManager.getSystemComponents().length) {
+                        emptyBtn.style.display='';
+                        const emptyTableWrap = document.getElementById('emptyTableWrap');
+                        if (emptyTableWrap) emptyTableWrap.style.display='none';
+                    }
+                    window.currentAddParentId = null;
+                    window.currentAddParentPort = null;
+                    window.currentParentDim = null;
+                    window.currentParentProps = null;
+                ">Annuller & Luk</button>
+            </div>
+            
+            <div class="input-group" style="margin-top: 10px;">
+                <label for="inlineComponentType">Komponenttype</label>
+                <select id="inlineComponentType" class="input-field" onchange="window.handleInlineComponentTypeChange('${containerId}')">
+                    <option value="">-- Vælg type --</option>
+                    <option value="straightDuct">Kanal</option>
+                    <option value="fitting">Formstykke</option>
+                    <option value="terminalUnit">Armatur / Terminal</option> 
+                    <option value="manualLoss">Manuelt tab</option>
+                </select>
+            </div>
+            <input type="hidden" id="systemComponentType" value="straightDuct">
+            <div id="${containerId}"></div>
+        `;
 
     const sysContainer = document.getElementById('systemComponentsContainer');
     sysContainer.appendChild(formWrapper);
@@ -2172,9 +2261,51 @@ export function handleInlineComponentTypeChange(containerId) {
             <div class="input-group"><label for="manualPressureLoss">Tryktab</label><div class="input-unit-wrapper" data-unit="Pa"><input type="text" id="manualPressureLoss" class="input-field" required></div></div>
             <div class="input-group"><label for="manualDescription">Beskrivelse</label><input type="text" id="manualDescription" class="input-field" placeholder="f.eks. Spjæld, rist, filter"></div>
         <button type="button" class="button primary" onclick="window.handleInlineComponentSubmit(event, '_inline')">Tilføj til system</button>`;
+        
+    } else if (type === 'terminalUnit') {
+        
+        // ----------------------------------------------------------------------
+        // --- NYT: TRIN 8 - Formular til tilføjelse af Armatur (Inline) ---
+        // ----------------------------------------------------------------------
+        container.innerHTML = `
+            <div class="input-group" style="margin-bottom: 10px;">
+                <label>Navn / Reference</label>
+                <input type="text" id="sys_term_name_inline" class="input-field" placeholder="f.eks. Rist Kontor 1">
+            </div>
+            <div class="input-field-group">
+                <div class="input-group">
+                    <label>Luftmængde</label>
+                    <div class="input-unit-wrapper" data-unit="m³/h">
+                        <input type="number" id="sys_term_flow_inline" class="input-field" value="150" step="5" min="0">
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label>Tryktab</label>
+                    <div class="input-unit-wrapper" data-unit="Pa">
+                        <input type="number" id="sys_term_dp_inline" class="input-field" value="30" step="1" min="0">
+                    </div>
+                </div>
+            </div>
+            <div class="input-field-group" style="margin-top: 10px;">
+                <div class="input-group">
+                    <label>Tilslutning</label>
+                    <div class="input-unit-wrapper" data-unit="Ø mm">
+                        <input type="number" id="sys_term_dim_inline" class="input-field" value="125" step="1" min="10">
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label>Strømningsretning</label>
+                    <select id="sys_term_dir_inline" class="input-field">
+                        <option value="auto" selected>Auto (Følg anlæg)</option>
+                        <option value="supply">Indblæsning</option>
+                        <option value="extract">Udsugning</option>
+                    </select>
+                </div>
+            </div>
+            <button type="button" class="button primary" onclick="window.handleInlineComponentSubmit(event, '_inline')" style="margin-top: 15px; width: 100%;">Tilføj Armatur</button>
+        `;
     }
 }
-
 // --- Validering af T-stykker før lagring/oppdatering ---
 
 window.handleValidatedSubmit = function(event, suffix) {
@@ -2192,6 +2323,11 @@ window.handleValidatedUpdate = function(id, suffix) {
 };
 
 function validateTeeFlows(suffix, compId = null) {
+    // --- Skip validering i Bottom-Up, da flow regnes baglæns! ---
+    if (window.stateManager && window.stateManager.state.calculationMode === 'bottom-up') {
+        return true; 
+    }
+
     const isBullhead = document.getElementById(`sys_tee_q_out1${suffix}`) !== null;
     const isStandardTee = document.getElementById(`sys_tee_q_straight${suffix}`) !== null;
     

@@ -81,6 +81,34 @@ window.deleteFitting = (id) => {
     ui.renderFittingsResult();
 };
 
+// --- Toggle mellem Top-Down og Bottom-Up ---
+window.toggleCalculationMode = (mode) => {
+    if (window.stateManager) {
+        // Gem valget i systemets state
+        window.stateManager.state.calculationMode = mode;
+        
+        // Lås eller åbn for global luftmængde
+        const startFlowInput = document.getElementById('system_airflow');
+        if (startFlowInput) {
+            if (mode === 'bottom-up') {
+                startFlowInput.disabled = true;
+                startFlowInput.style.opacity = '0.5';
+                startFlowInput.title = 'Beregnes automatisk ud fra armaturerne i Bottom-Up mode';
+            } else {
+                startFlowInput.disabled = false;
+                startFlowInput.style.opacity = '1';
+                startFlowInput.title = '';
+            }
+        }
+        
+        // Tving en genberegning og opdater tabellen (så T-stykkers flow-felter også låses senere)
+        window.recalculateSystem();
+        if (window.ui && window.ui.renderSystem) {
+            window.ui.renderSystem();
+        }
+    }
+};
+
 window.handleDeleteLastComponent = () => {
     removeLastSystemComponent();
     ui.renderSystem();
@@ -169,14 +197,19 @@ window.handleUpdateComponent = (id) => {
     if (component.type === 'straightDuct') {
         newData = getDuctData(suffix);
     } else if (component.type === 'manualLoss') {
-        const name = document.getElementById('manualDescription' + suffix).value;
-        const pressureLoss = parseLocalFloat(document.getElementById('manualPressureLoss' + suffix).value);
-        newData = {
-            type: 'manualLoss',
-            name,
-            properties: { pressureLoss },
-            state: {}
-        };
+            const name = document.getElementById('manualDescription' + suffix).value;
+            const pressureLoss = parseLocalFloat(document.getElementById('manualPressureLoss' + suffix).value);
+            newData = {
+                type: 'manualLoss',
+                name,
+                // RETTELSE HER: Inkluder 'type' for at undgå fremtidige crashes ved edit
+                properties: { type: 'manualLoss', pressureLoss: pressureLoss },
+                state: {}
+            };
+    } else if (component.type === 'terminalUnit') {
+        // --- NYT: TRIN 8 - Kald funktionen til redigering af armaturer ---
+        newData = getTerminalUnitData(suffix);
+
     } else {
         newData = getFittingData(suffix, component.type);
     }
@@ -766,6 +799,49 @@ function getFittingData(suffix, typeOverride = null) {
     return result;
 }
 
+// --- Data-opsamling for Armatur / Terminal Unit ---
+function getTerminalUnitData(suffix) {
+    const elName = document.getElementById('sys_term_name' + suffix);
+    const elFlow = document.getElementById('sys_term_flow' + suffix);
+    const elDp = document.getElementById('sys_term_dp' + suffix);
+    const elDim = document.getElementById('sys_term_dim' + suffix);
+    const elDir = document.getElementById('sys_term_dir' + suffix);
+
+    if (!elFlow || !elDp || !elDim) return null;
+
+    const name = elName.value.trim() || 'Armatur';
+    const flow = parseLocalFloat(elFlow.value) || 0;
+    const pressureLoss = parseLocalFloat(elDp.value) || 0;
+    const diameter = parseLocalFloat(elDim.value) || 125;
+    const direction = elDir ? elDir.value : 'auto';
+
+    return {
+        type: 'terminalUnit',
+        name: name,
+        details: `q: ${flow} m³/h, Ø${diameter}`,
+        properties: {
+            type: 'terminalUnit', // Sikrer konsistens
+            pressureLoss: pressureLoss,
+            diameter: diameter,
+            d: diameter,
+            shape: 'round',
+            direction: direction,
+            // q_room repræsenterer det faktiske behov i rummet
+            q_room: flow 
+        },
+        state: {
+            // I Bottom-Up skal dette flow senere regnes BAGLÆNS. 
+            // For nu gemmer vi det bare statisk for at få grafen bygget.
+            airflow_in: flow,
+            airflow_out: { 'outlet': flow },
+            pressureLoss: pressureLoss,
+            velocity: null, // Bliver regnet ud fra arealet senere
+            inletDimension: { shape: 'round', d: diameter },
+            outletDimension: { 'outlet': { shape: 'round', d: diameter } }
+        }
+    };
+}
+
 function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomingDim, globalParams, calculateThermodynamicsFlag = true) {
     const { RHO, NU, globalAmbient, systemTemp } = globalParams;
     let newCalc = {};
@@ -778,7 +854,7 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
     let t_out_val = incomingTemp;
     let q_loss_val = 0;
 
-    if (component.type === 'straightDuct') {
+if (component.type === 'straightDuct') {
         const Q = incomingFlow / 3600;
         let performance, inletDim, outletDim, perimeter;
 
@@ -811,17 +887,35 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
             temperature_out: { 'outlet': t_out_val },
             heatLoss: q_loss_val
         };
-    } else if (component.type === 'manualLoss') {
-        const inletDim = incomingDim || { shape: 'round', d: 0 };
+
+    // --- Fælles håndtering af ManualLoss og TerminalUnit ---
+    } else if (component.type === 'manualLoss' || component.type === 'terminalUnit') {
+        let inletDim = incomingDim || { shape: 'round', d: 0 };
+        let v = null;
+        let calcDetails = null;
+
+        // Armaturer har en specifik tilslutningsdimension, så vi kan udregne hastigheden i studsen
+        if (component.type === 'terminalUnit') {
+            const d_mm = p.diameter || p.d || 125;
+            inletDim = { shape: 'round', d: d_mm };
+            
+            // Hastighed i studsen: v = Q / A
+            const A_m2 = Math.PI * Math.pow(d_mm / 2000, 2);
+            if (A_m2 > 0) {
+                v = (incomingFlow / 3600) / A_m2;
+                calcDetails = { A_m2: A_m2, v_ms: v, type: 'terminalUnit' };
+            }
+        }
+
         newCalc = {
             airflow_in: incomingFlow,
             airflow_out: { 'outlet': incomingFlow },
-            velocity: null,
-            pressureLoss: p.pressureLoss,
+            velocity: v,
+            pressureLoss: p.pressureLoss || 0, // Her hentes armaturets Pa ind i systemet!
             zeta: null,
             inletDimension: inletDim,
             outletDimension: { 'outlet': inletDim },
-            calculationDetails: null,
+            calculationDetails: calcDetails,
             temperature_in: incomingTemp,
             temperature_out: { 'outlet': t_out_val },
             heatLoss: 0
@@ -1133,15 +1227,85 @@ function recalculateSystem() {
     const { RHO, NU } = physics.getAirProperties(temp);
     const globalParams = { globalFlowType, globalAmbient, globalRH, RHO, NU, systemTemp: temp };
 
+    // -------------------------------------------------------------------------
+    // --- NYT: TRIN 8.4 & 8.5 - Pass 1 (Bottom-Up Flow Summation & Orphans) ---
+    // -------------------------------------------------------------------------
+    function traverseAndSumFlow(nodeId) {
+        const comp = userNodes[nodeId];
+        if (!comp) return 0;
+
+        const childrenEdges = userEdges.filter(e => e.from === nodeId);
+
+        // Vi er nået til enden af en gren (Leaf Node)
+        if (childrenEdges.length === 0) {
+            if (comp.type === 'terminalUnit') {
+                // Armaturet returnerer sit eget flow
+                return comp.properties.q_room || 0;
+            } else {
+                // Blinde ender (Orphan nodes)
+                if (stateManager.state.calculationMode === 'bottom-up') {
+                    comp.details = '<span style="color:var(--error-color); font-weight:bold;">OBS! Mangler luftmængde</span>';
+                }
+                return 0; // Orphan node giver 0 flow, fysikken håndterer derefter 0 m/s
+            }
+        } else {
+            // Fjern evt. forældet advarsel, nu hvor komponenten har fået børn (Healing)
+            if (comp.details === '<span style="color:var(--error-color); font-weight:bold;">OBS! Mangler luftmængde</span>') {
+                comp.details = '';
+            }
+        }
+
+        let totalFlow = 0;
+        const portFlows = {};
+
+        // Traverser baglæns op (Post-Order)
+        childrenEdges.forEach(edge => {
+            const childFlow = traverseAndSumFlow(edge.to);
+            portFlows[edge.fromPort] = childFlow;
+            totalFlow += childFlow;
+        });
+
+        // Hvis det er et T-stykke, gennemtvinger vi flow-fordelingen fra armaturerne,
+        // så Pass 2 udregner Zeta-værdier ud fra det virkelige behov!
+        if (comp.type && comp.type.includes('tee')) {
+            if (comp.type === 'tee_bullhead') {
+                comp.properties.q_out1 = portFlows['outlet_path1'] || 0;
+                comp.properties.q_out2 = portFlows['outlet_path2'] || 0;
+            } else {
+                comp.properties.q_straight = portFlows['outlet_straight'] || 0;
+                comp.properties.q_branch = portFlows['outlet_branch'] || 0;
+            }
+        }
+
+        return totalFlow;
+    }
+
+    const rootIds = Object.keys(userNodes).filter(id => !userEdges.find(e => e.to === id));
+
+    let dynamicStartAirflow = startAirflow;
+    
+    // Udfør kun Pass 1, hvis systemet står i Bottom-Up
+    if (window.stateManager && window.stateManager.state.calculationMode === 'bottom-up') {
+        let systemTotalFlow = 0;
+        rootIds.forEach(rootId => {
+            systemTotalFlow += traverseAndSumFlow(rootId);
+        });
+        dynamicStartAirflow = systemTotalFlow;
+        
+        // Visuel opdatering af UI for at afspejle den samlede sum i roden
+        if (startAirflowEl) {
+            startAirflowEl.value = dynamicStartAirflow;
+        }
+    }
+    // -------------------------------------------------------------------------
+
     stateManager.clearSystem();
 
-    // --- NYT: Sikkerhed mod cirkulære referencer (Forhindrer Call Stack Error) ---
     const visitedNodesCalc = new Set();
 
     function traverseAndCalculate(nodeId, incomingFlow, incomingTemp, incomingDim, parentId, parentPort) {
-        // Stopper øjeblikkeligt uendelige loops
         if (visitedNodesCalc.has(nodeId)) {
-            console.error(`[Fysik-Motor] Cirkulær reference opdaget ved node: ${nodeId}. Afbryder for at beskytte browseren!`);
+            console.error(`[Fysik-Motor] Cirkulær reference opdaget ved node: ${nodeId}. Afbryder.`);
             return;
         }
         visitedNodesCalc.add(nodeId);
@@ -1157,7 +1321,6 @@ function recalculateSystem() {
         let currentParentId = parentId;
         let currentParentPort = parentPort;
 
-        // VIGTIGT: Vi bruger ALTID den visuelle 'inletDimension' som tilknytningspunkt.
         let childAttachDim = newCalc.inletDimension;
 
         if (incomingDim && childAttachDim && !physics.areDimensionsEqual(incomingDim, childAttachDim)) {
@@ -1203,20 +1366,15 @@ function recalculateSystem() {
         });
     }
 
-    const rootIds = Object.keys(userNodes).filter(id => !userEdges.find(e => e.to === id));
-
+    // Her sender vi nu 'dynamicStartAirflow' afsted (som enten er inputtet, eller summen fra Armaturerne!)
     rootIds.forEach(rootId => {
-        traverseAndCalculate(rootId, startAirflow, temp, null, null, null);
+        traverseAndCalculate(rootId, dynamicStartAirflow, temp, null, null, null);
     });
 
-    // --- NYT: Sikkerhed mod cirkulære referencer i Termodynamik ---
     const visitedNodesThermo = new Set();
 
     function traverseAndCalculateThermodynamics(nodeId, incomingTemp) {
-        // Stopper øjeblikkeligt uendelige loops i temperatur-beregningen
-        if (visitedNodesThermo.has(nodeId)) {
-            return incomingTemp;
-        }
+        if (visitedNodesThermo.has(nodeId)) return incomingTemp;
         visitedNodesThermo.add(nodeId);
 
         const comp = getSystemComponent(nodeId);
@@ -1226,7 +1384,6 @@ function recalculateSystem() {
         const childrenEdges = stateManager.getGraph().edges.filter(e => e.from === nodeId); 
         comp.state.heatLoss = 0; 
 
-        // --- FORBEDRET OVERFLADE BEREGNING (Fanger nu alt!) ---
         const getSurfaceProps = (c) => {
             let length = 0;
             let perimeter = 0;
@@ -1309,7 +1466,6 @@ function recalculateSystem() {
                 const res = physics.calculateTemperatureDrop(t_in, amb, surface.length, surface.perimeter, q_m_kgs, isoTh, isoL, globalParams.globalRH);
                 t_out['outlet'] = res.t_out;
                 
-                // Opdater også gren-udgangene for Bøjninger og T-stykker
                 t_out['outlet_straight'] = res.t_out;
                 t_out['outlet_branch'] = res.t_out;
                 t_out['outlet_path1'] = res.t_out;
@@ -1411,7 +1567,6 @@ function recalculateSystem() {
     ui.renderSystem();
     ui.handleComponentTypeChange();
 
-    // --- LIVE OPDATERING AF 3D (SOFT REFRESH) ---
     const diagContainer = document.getElementById('systemDiagramContainer');
     const isDesktop = document.body.classList.contains('desktop-mode');
     const isDiagActive = diagContainer && diagContainer.classList.contains('active');
@@ -1422,6 +1577,7 @@ function recalculateSystem() {
         }
     }
 }
+
 window.recalculateSystem = recalculateSystem;
 
 // --- INDSÆTTELSE AF NY KOMPONENT & AUTO-OVERGANG ---
@@ -1443,7 +1599,18 @@ window.handleInlineComponentSubmit = function (event, passedSuffix) {
     if (isNaN(temp)) return alert("Ugyldig temperatur.");
 
     let currentAirflow = parseLocalFloat(document.getElementById('system_airflow').value);
-    if (isNaN(currentAirflow) || currentAirflow <= 0) return alert("Ugyldig start luftmængde.");
+    
+    // --- NYT: TRIN 8 - Bottom-up validerings-bypass ---
+    const isBottomUp = window.stateManager && window.stateManager.state.calculationMode === 'bottom-up';
+
+    if (!isBottomUp && (isNaN(currentAirflow) || currentAirflow <= 0)) {
+        return alert("Ugyldig start luftmængde. Indtast anlæggets startflow.");
+    }
+    
+    // I Bottom-Up mode tillader vi 0 flow ved oprettelse (det regnes baglæns senere)
+    if (isBottomUp && (isNaN(currentAirflow) || currentAirflow < 0)) {
+        currentAirflow = 0; 
+    }
 
     const parentId = window.currentAddParentId;
     const parentPort = window.currentAddParentPort;
@@ -1472,21 +1639,25 @@ window.handleInlineComponentSubmit = function (event, passedSuffix) {
         }
         const fittingType = fittingTypeSelect ? fittingTypeSelect.value : null;
         component = getFittingData(suffix, fittingType);
-    } else if (type === 'manualLoss') {
-        const descId = document.getElementById('manualDescription' + suffix) ? 'manualDescription' + suffix : 'manualDescription';
-        const pressId = document.getElementById('manualPressureLoss' + suffix) ? 'manualPressureLoss' + suffix : 'manualPressureLoss';
-        const name = document.getElementById(descId).value || 'Manuel Komponent';
-        const pressureLoss = parseLocalFloat(document.getElementById(pressId).value);
-        if (isNaN(pressureLoss)) {
-            alert("Ugyldigt tryktab!");
-            return;
-        }
-        component = {
-            type: 'manualLoss',
-            name: name,
-            properties: { pressureLoss },
-            state: {}
-        };
+        } else if (type === 'manualLoss') {
+            const descId = document.getElementById('manualDescription' + suffix) ? 'manualDescription' + suffix : 'manualDescription';
+            const pressId = document.getElementById('manualPressureLoss' + suffix) ? 'manualPressureLoss' + suffix : 'manualPressureLoss';
+            const name = document.getElementById(descId).value || 'Manuel Komponent';
+            const pressureLoss = parseLocalFloat(document.getElementById(pressId).value);
+            if (isNaN(pressureLoss)) {
+                alert("Ugyldigt tryktab!");
+                return;
+            }
+            component = {
+                type: 'manualLoss',
+                name: name,
+                // RETTELSE HER: Inkluder 'type', så physics surface-tjekket ikke crasher
+                properties: { type: 'manualLoss', pressureLoss: pressureLoss },
+                state: {}
+            };
+        } else if (type === 'terminalUnit') {
+        // --- Kald funktionen til armaturer ---
+        component = getTerminalUnitData(suffix);
     }
 
     if (component) {

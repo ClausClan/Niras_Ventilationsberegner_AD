@@ -1126,7 +1126,7 @@ export function renderDiagram(keepControls = false) {
 
                 midWay.copy(midPos);
 
-                const drawOpenEnd = (pos, dir, portName) => {
+                const drawOpenEnd = (pos, dir, portName = null) => {
                     const arrowLength = 50;
                     const arrowDir = isExhaust ? dir.clone().negate() : dir;
                     const arrowPos = isExhaust ? pos.clone().add(dir.clone().multiplyScalar(arrowLength)) : pos;
@@ -1134,11 +1134,23 @@ export function renderDiagram(keepControls = false) {
                     const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowPos, arrowLength, 0x00E4FF, 15, 10);
                     scene.add(arrowHelper);
 
-                    const outFlow = comp.state?.airflow_out?.[portName] || 0;
+                    let outFlow = 0;
+                    if (portName && comp.state?.airflow_out) {
+                        outFlow = comp.state.airflow_out[portName];
+                    } else {
+                        outFlow = comp.state?.airflow_out?.outlet || comp.state?.airflow_out?.outlet_straight || comp.state?.airflow_out?.outlet_branch || comp.state?.airflow_in || 0;
+                    }
+
                     const flow = Math.round(outFlow);
-                    
-                    const tOutRaw = comp.state?.temperature_out?.[portName] || comp.state?.temperature_in || 20;
+
+                    let tOutRaw = 20;
+                    if (portName && comp.state?.temperature_out) {
+                        tOutRaw = comp.state.temperature_out[portName];
+                    } else {
+                        tOutRaw = comp.state?.temperature_out?.outlet || comp.state?.temperature_out?.outlet_straight || comp.state?.temperature_in || 20;
+                    }
                     const temp = parseFloat(tOutRaw);
+
                     const endText = isExhaust ? 'Udsugning' : 'Indblæsning';
                     const safePortName = portName || 'outlet';
 
@@ -1155,7 +1167,8 @@ export function renderDiagram(keepControls = false) {
                     div.style.pointerEvents = 'none';
                     div.style.textAlign = 'center';
                     
-                    const addButtonHtml = isDesktop 
+                    const isTerminal = comp.type === 'terminalUnit';
+                    const addButtonHtml = (isDesktop && !isTerminal) 
                         ? `<br><button class="add-btn-3d" 
                                 style="pointer-events: auto; cursor: pointer; margin-top: 6px; padding: 4px 8px; font-size: 14px; background: #00A4E0; color: #fff; border: none; border-radius: 4px; font-weight: bold; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;" 
                                 onpointerdown="event.stopPropagation();"
@@ -1369,7 +1382,9 @@ export function renderDiagram(keepControls = false) {
                 div.style.pointerEvents = 'none';
                 div.style.textAlign = 'center';
                 
-                const addButtonHtml = isDesktop 
+                const isTerminal = comp.type === 'terminalUnit' || (comp.properties && comp.properties.type === 'terminalUnit');
+                
+                const addButtonHtml = (isDesktop && !isTerminal) 
                     ? `<br><button class="add-btn-3d" 
                             style="pointer-events: auto; cursor: pointer; margin-top: 6px; padding: 4px 8px; font-size: 14px; background: #00A4E0; color: #fff; border: none; border-radius: 4px; font-weight: bold; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;" 
                             onpointerdown="event.stopPropagation();"
@@ -1378,7 +1393,7 @@ export function renderDiagram(keepControls = false) {
                         +
                     </button>`
                     : '';
-                
+                    
                 let endTextLines = [endText];
                 if (diagramSettings.labels.flow) endTextLines.push(`${flow} m³/h`);
                 if (diagramSettings.labels.temp) endTextLines.push(`${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`);
@@ -1404,8 +1419,14 @@ export function renderDiagram(keepControls = false) {
                 else drawOpenEnd(branchStart, branchDir, 'outlet_branch');
             } else {
                 const c = comp.children && comp.children.outlet && comp.children.outlet[0];
-                if (c) drawTree3D(c, nextPos, nextDir, nextUp);
-                else drawOpenEnd(nextPos, nextDir);
+                if (c) {
+                    drawTree3D(c, nextPos, nextDir, nextUp);
+                } else {
+                    // --- Kald ALTID drawOpenEnd for at få skiltet med data ---
+                    // Men send flaget isTerminal med, hvis det er et armatur
+                    const isTerminal = comp.type === 'terminalUnit';
+                    drawOpenEnd(nextPos, nextDir, 'outlet', isTerminal);
+                }
             }
         }
     }
