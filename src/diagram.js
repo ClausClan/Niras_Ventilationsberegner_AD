@@ -480,7 +480,7 @@ export function renderDiagram(keepControls = false) {
             if (dx > 5 || dy > 5) isDragging = true;
         });
         
-        canvas.addEventListener('pointerup', (e) => {
+canvas.addEventListener('pointerup', (e) => {
             if (isDragging) return;
 
             const rect = canvas.getBoundingClientRect();
@@ -517,14 +517,19 @@ export function renderDiagram(keepControls = false) {
                         const airflow = comp.state?.airflow_in || comp.airflow || 0;
                         const shortId = compId.split('_')[1] || compId.substring(0,4);
 
-                        const splitBtnHtml = comp.type === 'straightDuct' 
-                            ? `<button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem; opacity: 0.3; pointer-events: none; filter: grayscale(1);">
+                        // --- HUD Actions --- 
+                        const pType = comp.fittingType || (comp.properties && comp.properties.type) || comp.type || '';
+                        const isStraight = comp.type === 'straightDuct';
+                        
+                        // Split-knap kun til lige rør
+                        const splitBtnHtml = isStraight 
+                            ? `<button class="hud-btn" onclick="window.handleSplitDuct('${compId}'); document.getElementById('hudContextMenu').remove();">
                                    <span>✂️</span> Split kanal
                                </button>`
                             : '';
                             
                         let extraDataHtml = '';
-                        if (comp.type === 'straightDuct') {
+                        if (isStraight) {
                             const length = comp.properties?.length ? parseFloat(comp.properties.length).toFixed(2) : '-';
                             const dpPerMeter = comp.state?.calculationDetails?.pressureDrop ? comp.state.calculationDetails.pressureDrop.toFixed(2) : '-';
                             
@@ -532,6 +537,43 @@ export function renderDiagram(keepControls = false) {
                                 <div>Længde:</div> <span>${length} m</span>
                                 <div>Tryktab:</div> <span>${dpPerMeter} Pa/m</span>
                             `;
+                        }
+
+                        // Kopiér/Indsæt status
+                        const hasClipboard = window.clipboardBranch !== undefined && window.clipboardBranch !== null;
+                        const pasteOpacity = hasClipboard ? '1' : '0.4';
+                        const pastePointer = hasClipboard ? 'auto' : 'none';
+
+                        // Dynamiske Tilføj og Indsæt knapper afhængig af topologi/porte
+                        let addButtonsHtml = '';
+                        let pasteButtonsHtml = '';
+
+                        if (pType.startsWith('tee_')) {
+                            const isBullhead = pType === 'tee_bullhead';
+                            const p1 = isBullhead ? 'outlet_path1' : 'outlet_straight';
+                            const p2 = isBullhead ? 'outlet_path2' : 'outlet_branch';
+                            const getDimStr = (port) => {
+                                const d = comp.state?.outletDimension?.[port];
+                                return d ? (d.shape === 'round' ? `Ø${d.d}` : `${d.w}x${d.h}`) : '';
+                            };
+                            
+                            const d1Str = getDimStr(p1);
+                            const d2Str = getDimStr(p2);
+
+                            const l1 = isBullhead ? `Gren 1 ${d1Str ? '('+d1Str+')' : ''}` : `Ligeud ${d1Str ? '('+d1Str+')' : ''}`;
+                            const l2 = isBullhead ? `Gren 2 ${d2Str ? '('+d2Str+')' : ''}` : `Afgrening ${d2Str ? '('+d2Str+')' : ''}`;
+                            
+                            addButtonsHtml = `
+                                <button class="hud-btn" onclick="window.showAddForm('${compId}', '${p1}'); document.getElementById('hudContextMenu').remove();"><span>➕</span> Tilføj efter ${l1}</button>
+                                <button class="hud-btn" onclick="window.showAddForm('${compId}', '${p2}'); document.getElementById('hudContextMenu').remove();"><span>➕</span> Tilføj efter ${l2}</button>
+                            `;
+                            pasteButtonsHtml = `
+                                <button class="hud-btn" style="opacity: ${pasteOpacity}; pointer-events: ${pastePointer};" onclick="window.handlePasteBranch('${compId}', '${p1}'); document.getElementById('hudContextMenu').remove();"><span>📋</span> Indsæt efter ${l1}</button>
+                                <button class="hud-btn" style="opacity: ${pasteOpacity}; pointer-events: ${pastePointer};" onclick="window.handlePasteBranch('${compId}', '${p2}'); document.getElementById('hudContextMenu').remove();"><span>📋</span> Indsæt efter ${l2}</button>
+                            `;
+                        } else if (comp.type !== 'terminalUnit') { // Leaf nodes (armaturer) kan ikke bygges videre på
+                            addButtonsHtml = `<button class="hud-btn" onclick="window.showAddForm('${compId}', 'outlet'); document.getElementById('hudContextMenu').remove();"><span>➕</span> Tilføj efter</button>`;
+                            pasteButtonsHtml = `<button class="hud-btn" style="opacity: ${pasteOpacity}; pointer-events: ${pastePointer};" onclick="window.handlePasteBranch('${compId}', 'outlet'); document.getElementById('hudContextMenu').remove();"><span>📋</span> Indsæt gren</button>`;
                         }
 
                         hudMenu.innerHTML = `
@@ -546,24 +588,34 @@ export function renderDiagram(keepControls = false) {
                                 <div>Total Tab:</div> <span>${pressure} Pa</span>
                             </div>
                             <div class="hud-actions" style="gap: 4px;">
-                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.showSystemComponentDetails('${compId}'); document.getElementById('hudContextMenu').remove();">
+                                <button class="hud-btn" onclick="window.showSystemComponentDetails('${compId}'); document.getElementById('hudContextMenu').remove();">
                                     <span>ℹ️</span> Detaljer
                                 </button>
-                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.showEditForm('${compId}'); document.getElementById('hudContextMenu').remove();">
+                                <button class="hud-btn" onclick="window.handleEditComponent('${compId}'); document.getElementById('hudContextMenu').remove();">
                                     <span>✏️</span> Rediger
                                 </button>
-                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem; opacity: 0.3; pointer-events: none; filter: grayscale(1);">
-                                    <span>➕</span> Tilføj
-                                </button>
+                                ${addButtonsHtml}
                                 ${splitBtnHtml}
+                                <button class="hud-btn" onclick="window.handleCopyBranch('${compId}'); document.getElementById('hudContextMenu').remove();">
+                                    <span>📄</span> Kopiér gren
+                                </button>
+                                ${pasteButtonsHtml}
+                                <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 2px 0;"></div>
+                                <button class="hud-btn" style="color: #ff4444; border-color: rgba(255,68,68,0.2);" onclick="window.handleDeleteComponent('${compId}'); document.getElementById('hudContextMenu').remove();">
+                                    <span>❌</span> Slet komponent
+                                </button>
                             </div>
                         `;
 
                         document.body.appendChild(hudMenu);
 
-                        hudMenu.style.left = `${e.clientX}px`;
-                        hudMenu.style.top = `${e.clientY}px`;
-                        hudMenu.style.width = '200px'; 
+                        // HUD Positionering
+                        const scale = 0.75;
+                        let targetX = e.clientX / scale;
+                        let targetY = e.clientY / scale;
+
+                        hudMenu.style.left = `${targetX}px`;
+                        hudMenu.style.top = `${targetY}px`;
                         
                         setTimeout(() => {
                             hudMenu.classList.add('active');
@@ -1104,7 +1156,7 @@ export function renderDiagram(keepControls = false) {
                 gB1.translate(0, stubLen/2, 0);
                 gB1.rotateX(Math.PI/2);
                 const meshB1 = new THREE.Mesh(gB1, material);
-                meshB1.userData.compId = comp.id;
+                meshB1.userData = { compId: comp.id, port: 'outlet_path1' };
                 meshB1.position.copy(midPos);
                 meshB1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path1Dir);
                 scene.add(meshB1);
@@ -1116,7 +1168,7 @@ export function renderDiagram(keepControls = false) {
                 gB2.translate(0, stubLen/2, 0);
                 gB2.rotateX(Math.PI/2);
                 const meshB2 = new THREE.Mesh(gB2, material);
-                meshB2.userData.compId = comp.id;
+                meshB2.userData = { compId: comp.id, port: 'outlet_path2' };
                 meshB2.position.copy(midPos);
                 meshB2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path2Dir);
                 scene.add(meshB2);
@@ -1224,7 +1276,7 @@ export function renderDiagram(keepControls = false) {
                 gS.translate(0, moveDist / 2, 0);
                 gS.rotateX(Math.PI / 2);
                 const meshS = new THREE.Mesh(gS, material);
-                meshS.userData.compId = comp.id;
+                meshS.userData = { compId: comp.id, port: 'outlet_straight' };
                 meshS.position.copy(currentPos);
                 meshS.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
                 scene.add(meshS);
@@ -1243,7 +1295,7 @@ export function renderDiagram(keepControls = false) {
                 gB.translate(0, stubLen / 2, 0);
                 gB.rotateX(Math.PI / 2);
                 const meshB = new THREE.Mesh(gB, material);
-                meshB.userData.compId = comp.id;
+                meshB.userData = { compId: comp.id, port: 'outlet_branch' };
                 meshB.position.copy(midPos);
                 meshB.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), branchDir);
                 scene.add(meshB);

@@ -354,12 +354,12 @@ export function getSystemFormHtml() {
                         <div class="input-group" style="margin-bottom: 0;">
                             <label>Systemtype</label>
                             <div id="globalSystemTypeGroup" class="radio-group"> 
-                                <input type="radio" id="sysTypeSupply" name="systemFlowType" value="splitting" checked onchange="window.recalculateSystem()"><label for="sysTypeSupply">Indblæsning</label> 
-                                <input type="radio" id="sysTypeExhaust" name="systemFlowType" value="merging" onchange="window.recalculateSystem()"><label for="sysTypeExhaust">Udsugning</label> 
+                                <input type="radio" id="sysTypeSupply" name="systemFlowType" value="splitting" checked onchange="window.handleSystemDirectionChange(this.value)"><label for="sysTypeSupply">Indblæsning</label> 
+                                <input type="radio" id="sysTypeExhaust" name="systemFlowType" value="merging" onchange="window.handleSystemDirectionChange(this.value)"><label for="sysTypeExhaust">Udsugning</label> 
                             </div>
                         </div>
 
-                        <!-- NY: Arbejdsmetode (Top-Down / Bottom-Up) -->
+                        <!-- Arbejdsmetode (Top-Down / Bottom-Up) -->
                         <div class="input-group" style="margin-bottom: 0;">
                             <label>Arbejdsmetode</label>
                             <div id="globalCalcModeGroup" class="radio-group"> 
@@ -446,32 +446,37 @@ export function renderSystem() {
     totalPressureDropContainer.innerHTML = '';
 
     const airflowInput = document.getElementById('system_airflow');
-    const systemTypeRadios = document.getElementsByName('systemFlowType');
+    const systemTypeRadios = document.querySelectorAll('input[name="systemFlowType"]');
     const systemTypeGroup = document.getElementById('globalSystemTypeGroup');
 
-    if (flatComponents.length > 0) {
-        airflowInput.disabled = true;
-        systemTypeRadios.forEach(radio => radio.disabled = true);
-        if (systemTypeGroup) systemTypeGroup.classList.add('disabled');
-    } else {
-        airflowInput.disabled = false;
-        systemTypeRadios.forEach(radio => radio.disabled = false);
-        if (systemTypeGroup) systemTypeGroup.classList.remove('disabled');
+    // --- REN KODE: Logik til låsning af inputs baseret på State ---
+    const isBottomUp = window.stateManager && window.stateManager.state.calculationMode === 'bottom-up';
+    const hasComponents = flatComponents.length > 0;
+    
+    // I Top-Down låses input for systemtype, når der er komponenter. 
+    // I Bottom-Up forbliver radio-knapperne altid åbne, så flowretningen/armaturerne kan synkroniseres.
+    const shouldLockSystemType = hasComponents && !isBottomUp;
+    
+    // Startflow er låst i Bottom-Up (da det regnes baglæns fra armaturer), 
+    // eller hvis der er tilføjet komponenter i Top-Down.
+    const shouldLockAirflow = isBottomUp || hasComponents;
+
+    if (airflowInput) airflowInput.disabled = shouldLockAirflow;
+    
+    systemTypeRadios.forEach(radio => radio.disabled = shouldLockSystemType);
+    if (systemTypeGroup) {
+        if (shouldLockSystemType) systemTypeGroup.classList.add('disabled');
+        else systemTypeGroup.classList.remove('disabled');
     }
 
-    if (flatComponents.length === 0) {
+    if (hasComponents === false) {
         const selectedType = document.querySelector('input[name="systemFlowType"]:checked')?.value || 'splitting';
-        let noteText = '';
-        if (selectedType === 'splitting') {
-            noteText = 'Systemet er tomt. Start ved anlægget og arbejd dig <strong>ud</strong> mod de yderste grene.';
-        } else { 
-            noteText = 'Systemet er tomt. Start ved den yderste gren og arbejd dig <strong>ind</strong> mod anlægget.';
-        }
+        let noteText = selectedType === 'splitting' 
+            ? 'Systemet er tomt. Start ved anlægget og arbejd dig <strong>ud</strong> mod de yderste grene.'
+            : 'Systemet er tomt. Start ved den yderste gren og arbejd dig <strong>ind</strong> mod anlægget.';
         
-        // Hent den valgte retning fra stateManager
         const startDir = window.stateManager && window.stateManager.state ? window.stateManager.state.startDirection || 'Right' : 'Right';
 
-        // Hjælpefunktion til at style knapperne dynamisk (Neon glow hvis valgt)
         const getArrowStyle = (dir) => {
             if (startDir === dir) {
                 return `border: 1px solid var(--primary-neon-blue); box-shadow: inset 0 0 10px rgba(0, 228, 255, 0.4); background: rgba(0, 228, 255, 0.1); font-size: 1.5rem; width: 45px; height: 45px; border-radius: 8px; cursor: pointer; transition: all 0.2s;`;

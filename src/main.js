@@ -76,6 +76,33 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// --- HUD Handler for at splitte kanaler ---
+window.handleSplitDuct = function(compId) {
+    const numPartsStr = prompt("Hvor mange lige store dele vil du splitte kanalen i?", "2");
+    if (!numPartsStr) return;
+    
+    const numParts = parseInt(numPartsStr, 10);
+    if (isNaN(numParts) || numParts < 2 || numParts > 50) {
+        alert("Fejl: Indtast et gyldigt heltal mellem 2 og 50.");
+        return;
+    }
+
+    if (window.stateManager && typeof window.stateManager.splitDuct === 'function') {
+        window.stateManager.splitDuct(compId, numParts);
+        
+        // Gennemtving fysik-beregning og 3D genoptegning
+        if (typeof window.recalculateSystem === 'function') {
+            window.recalculateSystem();
+        }
+        
+        // Opdater UI
+        if (window.ui && window.ui.updateUndoRedoUI) {
+            window.ui.updateUndoRedoUI(window.canUndo(), window.canRedo());
+            window.ui.showSaveStatus('Kanal splittet', 'saved');
+        }
+    }
+};
+
 window.deleteFitting = (id) => {
     removeFitting(id);
     ui.renderFittingsResult();
@@ -2076,6 +2103,62 @@ window.saveSystem = () => {
     a.click();
     URL.revokeObjectURL(url);
 };
+
+/**
+ * @param {string} newType - 'splitting' (Indblæsning) eller 'merging' (Udsugning)
+ */
+window.handleSystemDirectionChange = function(newType) {
+    if (!window.stateManager) {
+        console.error("[Controller] StateManager ikke fundet. Kan ikke skifte retning.");
+        return;
+    }
+
+    // 1. Opdater global state (vi sætter begge for fuld kompatibilitet)
+    window.stateManager.state.systemType = newType;
+    window.stateManager.state.systemFlowType = newType;
+    
+    // 2. Hent hele BOT-grafen for at synkronisere armaturer (Trin 8.7)
+    const graph = window.stateManager.getGraph();
+    let terminalsUpdated = 0;
+
+    Object.values(graph.nodes).forEach(node => {
+        if (node.type === 'terminalUnit') {
+            if (!node.properties) node.properties = {};
+            // Synkroniser armaturets iboende retning med anlæggets
+            node.properties.direction = (newType === 'splitting') ? 'supply' : 'extract';
+            terminalsUpdated++;
+        }
+    });
+
+    // 3. Log og gem state (uden at spamme Undo-stakken)
+    console.log(`[Fysik-Motor] Retning ændret til: ${newType === 'splitting' ? 'Indblæsning' : 'Udsugning'}. Synkroniserede ${terminalsUpdated} armaturer.`);
+    window.stateManager.persist();
+
+    // 4. Gennemtving et fuldt 2-Pass Recalculate
+    if (typeof window.recalculateSystem === 'function') {
+        window.recalculateSystem();
+    }
+};
+
+// --- Event Listener Binding ---
+// Binder automatisk logikken til dine eksisterende radio-knapper for anlægstype
+document.addEventListener('DOMContentLoaded', () => {
+    const flowTypeRadios = document.querySelectorAll('input[name="systemFlowType"]');
+if (flowTypeRadios.length > 0) {
+    const graph = window.stateManager ? window.stateManager.getGraph() : { nodes: {} };
+    const nodeCount = Object.keys(graph.nodes).length;
+    
+    // NYT: Tjek om vi er i Bottom-Up mode
+    const isBottomUp = window.stateManager && window.stateManager.state.calculationMode === 'bottom-up';
+
+    // Vi låser KUN radio-knapperne, hvis systemet har noder, OG vi IKKE er i Bottom-Up mode!
+    const shouldLock = nodeCount > 0 && !isBottomUp;
+
+    flowTypeRadios.forEach(radio => {
+        radio.disabled = shouldLock;
+    });
+}
+});
 
 document.addEventListener('DOMContentLoaded', initializeApp);
 
