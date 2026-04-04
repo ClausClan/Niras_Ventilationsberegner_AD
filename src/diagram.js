@@ -268,8 +268,63 @@ export function renderDiagram(keepControls = false) {
     const isExhaust = fullState.systemType === 'merging';
 
     if (components.length === 0) {
-        container.innerHTML = '<p style="text-align:center;color:#666;">Ingen komponenter at vise i 3D.</p>';
-        return;
+        // 1. Sørg for at WebGL containeren eksisterer
+        if (!document.getElementById('diagramWebglContainer') && renderer) {
+             container.innerHTML = '<div id="diagramWebglContainer" style="width:100%; height:100%; min-height: 500px; background:#111;"></div><div id="diagramLabels" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:50;"></div>';
+             document.getElementById('diagramWebglContainer').appendChild(renderer.domElement);
+        }
+
+        // 2. Ryd gamle labels
+        const labelsContainer = document.getElementById('diagramLabels');
+        if (labelsContainer) labelsContainer.innerHTML = '';
+        if (typeof labelsMap !== 'undefined') labelsMap.clear();
+
+        // 3. Støvsug 3D scenen
+        if (scene) {
+            for (let i = scene.children.length - 1; i >= 0; i--) {
+                let obj = scene.children[i];
+                if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "GridHelper") {
+                    scene.remove(obj);
+                    if (obj.geometry) obj.geometry.dispose();
+                    if (obj.material) obj.material.dispose();
+                }
+            }
+
+            // 4. Byg "Empty State" - Et uendeligt CAD-gitter
+            const gridHelper = new THREE.GridHelper(2000, 40, 0x00A4E0, 0x333333);
+            gridHelper.position.set(0, -20, 0);
+            gridHelper.material.opacity = 0.4;
+            gridHelper.material.transparent = true;
+            scene.add(gridHelper);
+
+            // 5. Byg "VentCalculatorADV" Ikonet (Et stiliseret Neon Rør/Ventilator)
+            const iconGeo = new THREE.CylinderGeometry(30, 30, 60, 16);
+            const iconMat = new THREE.MeshBasicMaterial({ color: 0x00E4FF, wireframe: true, transparent: true, opacity: 0.6 });
+            const iconMesh = new THREE.Mesh(iconGeo, iconMat);
+            iconMesh.rotation.x = Math.PI / 2;
+            scene.add(iconMesh);
+
+            // 6. Tilføj svævende tekst over ikonet
+            const div = document.createElement('div');
+            div.style.position = 'absolute';
+            div.style.color = '#00E4FF';
+            div.style.textAlign = 'center';
+            div.style.fontWeight = 'bold';
+            div.style.textShadow = '0px 0px 8px #00E4FF';
+            div.style.fontFamily = 'monospace';
+            div.style.pointerEvents = 'none';
+            div.innerHTML = '<span style="font-size: 1.2rem;">VentCalculatorADV</span><br><span style="font-size: 0.8rem; color: #aaa;">Venter på startkomponent...</span>';
+            labelsContainer.appendChild(div);
+            labelsMap.set(div, new THREE.Vector3(0, 50, 0));
+
+            // 7. Sæt kameraet til en flot isometrisk vinkel
+            if (camera && controls) {
+                controls.target.set(0, 0, 0);
+                camera.position.set(150, 150, 150);
+                camera.lookAt(0, 0, 0);
+            }
+        }
+        return; // Afbryd resten af render funktionen, da der ikke er et træ at tegne
     }
 
     let webglContainer = document.getElementById('diagramWebglContainer');
@@ -480,7 +535,8 @@ export function renderDiagram(keepControls = false) {
             if (dx > 5 || dy > 5) isDragging = true;
         });
         
-canvas.addEventListener('pointerup', (e) => {
+// --- TRIN 8.8 - 8.10: Komplet Raycaster og HUD (Defensiv Vanilla JS) ---
+        canvas.addEventListener('pointerup', (e) => {
             if (isDragging) return;
 
             const rect = canvas.getBoundingClientRect();
@@ -495,6 +551,7 @@ canvas.addEventListener('pointerup', (e) => {
 
             for (let i = 0; i < intersects.length; i++) {
                 const obj = intersects[i].object;
+                
                 if (obj.userData && obj.userData.compId != null) {
                     const compId = String(obj.userData.compId);
                     
@@ -512,66 +569,69 @@ canvas.addEventListener('pointerup', (e) => {
                         hudMenu.className = 'hud-context-menu'; 
                         
                         const comp = window.stateManager ? window.stateManager.getSystemComponent(compId) : { name: "Ukendt", state: {} };
-                        const velocity = comp.state?.velocity ? comp.state.velocity.toFixed(2) : '-';
-                        const pressure = comp.state?.pressureLoss ? comp.state.pressureLoss.toFixed(2) : '-';
-                        const airflow = comp.state?.airflow_in || comp.airflow || 0;
+                        
+                        // Defensiv variabeludtrækning (uden optional chaining)
+                        const velocity = (comp.state && comp.state.velocity) ? comp.state.velocity.toFixed(2) : '-';
+                        const pressure = (comp.state && comp.state.pressureLoss) ? comp.state.pressureLoss.toFixed(2) : '-';
+                        const airflow = (comp.state && comp.state.airflow_in) || comp.airflow || 0;
                         const shortId = compId.split('_')[1] || compId.substring(0,4);
 
-                        // --- HUD Actions --- 
                         const pType = comp.fittingType || (comp.properties && comp.properties.type) || comp.type || '';
                         const isStraight = comp.type === 'straightDuct';
                         
-                        // Split-knap kun til lige rør
+                        // Split-knap
                         const splitBtnHtml = isStraight 
-                            ? `<button class="hud-btn" onclick="window.handleSplitDuct('${compId}'); document.getElementById('hudContextMenu').remove();">
-                                   <span>✂️</span> Split kanal
-                               </button>`
+                            ? `<button class="hud-btn" onclick="window.handleSplitDuct('${compId}'); document.getElementById('hudContextMenu').remove();"><span>✂️</span> Split kanal</button>`
                             : '';
                             
                         let extraDataHtml = '';
                         if (isStraight) {
-                            const length = comp.properties?.length ? parseFloat(comp.properties.length).toFixed(2) : '-';
-                            const dpPerMeter = comp.state?.calculationDetails?.pressureDrop ? comp.state.calculationDetails.pressureDrop.toFixed(2) : '-';
-                            
-                            extraDataHtml = `
-                                <div>Længde:</div> <span>${length} m</span>
-                                <div>Tryktab:</div> <span>${dpPerMeter} Pa/m</span>
-                            `;
+                            const length = (comp.properties && comp.properties.length) ? parseFloat(comp.properties.length).toFixed(2) : '-';
+                            const dpPerMeter = (comp.state && comp.state.calculationDetails && comp.state.calculationDetails.pressureDrop) ? comp.state.calculationDetails.pressureDrop.toFixed(2) : '-';
+                            extraDataHtml = `<div>Længde:</div> <span>${length} m</span><div>Tryktab:</div> <span>${dpPerMeter} Pa/m</span>`;
                         }
 
-                        // Kopiér/Indsæt status
+                        // Clipboard status
                         const hasClipboard = window.clipboardBranch !== undefined && window.clipboardBranch !== null;
                         const pasteOpacity = hasClipboard ? '1' : '0.4';
                         const pastePointer = hasClipboard ? 'auto' : 'none';
+                        const clickedPort = obj.userData.port;
 
-                        // Dynamiske Tilføj og Indsæt knapper afhængig af topologi/porte
                         let addButtonsHtml = '';
                         let pasteButtonsHtml = '';
 
                         if (pType.startsWith('tee_')) {
-                            const isBullhead = pType === 'tee_bullhead';
-                            const p1 = isBullhead ? 'outlet_path1' : 'outlet_straight';
-                            const p2 = isBullhead ? 'outlet_path2' : 'outlet_branch';
-                            const getDimStr = (port) => {
-                                const d = comp.state?.outletDimension?.[port];
-                                return d ? (d.shape === 'round' ? `Ø${d.d}` : `${d.w}x${d.h}`) : '';
-                            };
-                            
-                            const d1Str = getDimStr(p1);
-                            const d2Str = getDimStr(p2);
+                            // Vi tjekker om brugeren ramte en udgang!
+                            if (clickedPort === 'outlet_straight' || clickedPort === 'outlet_branch' || clickedPort === 'outlet_path1' || clickedPort === 'outlet_path2') {
+                                
+                                // Bestem det danske navn for den port vi ramte
+                                let portNameDk = 'Afgrening';
+                                if (clickedPort === 'outlet_straight') portNameDk = 'Ligeud';
+                                if (clickedPort === 'outlet_path1') portNameDk = 'Gren 1';
+                                if (clickedPort === 'outlet_path2') portNameDk = 'Gren 2';
 
-                            const l1 = isBullhead ? `Gren 1 ${d1Str ? '('+d1Str+')' : ''}` : `Ligeud ${d1Str ? '('+d1Str+')' : ''}`;
-                            const l2 = isBullhead ? `Gren 2 ${d2Str ? '('+d2Str+')' : ''}` : `Afgrening ${d2Str ? '('+d2Str+')' : ''}`;
-                            
-                            addButtonsHtml = `
-                                <button class="hud-btn" onclick="window.showAddForm('${compId}', '${p1}'); document.getElementById('hudContextMenu').remove();"><span>➕</span> Tilføj efter ${l1}</button>
-                                <button class="hud-btn" onclick="window.showAddForm('${compId}', '${p2}'); document.getElementById('hudContextMenu').remove();"><span>➕</span> Tilføj efter ${l2}</button>
-                            `;
-                            pasteButtonsHtml = `
-                                <button class="hud-btn" style="opacity: ${pasteOpacity}; pointer-events: ${pastePointer};" onclick="window.handlePasteBranch('${compId}', '${p1}'); document.getElementById('hudContextMenu').remove();"><span>📋</span> Indsæt efter ${l1}</button>
-                                <button class="hud-btn" style="opacity: ${pasteOpacity}; pointer-events: ${pastePointer};" onclick="window.handlePasteBranch('${compId}', '${p2}'); document.getElementById('hudContextMenu').remove();"><span>📋</span> Indsæt efter ${l2}</button>
-                            `;
-                        } else if (comp.type !== 'terminalUnit') { // Leaf nodes (armaturer) kan ikke bygges videre på
+                                // Hent dimensionen for at gøre det endnu lækrere
+                                const d = (comp.state && comp.state.outletDimension && comp.state.outletDimension[clickedPort]) ? comp.state.outletDimension[clickedPort] : null;
+                                const dimStr = d ? (d.shape === 'round' ? `Ø${d.d}` : `${d.w}x${d.h}`) : '';
+
+                                // Vis KUN én Tilføj-knap for præcis dén cylinder du klikkede på
+                                addButtonsHtml = `
+                                    <button class="hud-btn" style="border-color: var(--primary-neon-blue); box-shadow: 0 0 8px rgba(0, 228, 255, 0.4);" onclick="window.showAddForm('${compId}', '${clickedPort}'); document.getElementById('hudContextMenu').remove();">
+                                        <span>➕</span> Tilføj på ${portNameDk} ${dimStr}
+                                    </button>
+                                `;
+                                
+                                pasteButtonsHtml = `
+                                    <button class="hud-btn" style="opacity: ${pasteOpacity}; pointer-events: ${pastePointer};" onclick="window.handlePasteBranch('${compId}', '${clickedPort}'); document.getElementById('hudContextMenu').remove();">
+                                        <span>📋</span> Indsæt på ${portNameDk}
+                                    </button>
+                                `;
+                            } else {
+                                // Hvis de klikkede på selve "hovedrøret/indløbet" af T-stykket
+                                addButtonsHtml = `<div style="font-size: 0.75rem; color: var(--error-color); padding: 4px; text-align: center;">Klik på den specifikke<br>afgrening for at bygge videre.</div>`;
+                            }
+                        } else if (comp.type !== 'terminalUnit') { 
+                            // ... [Logik for standard lige rør og bøjninger] ...
                             addButtonsHtml = `<button class="hud-btn" onclick="window.showAddForm('${compId}', 'outlet'); document.getElementById('hudContextMenu').remove();"><span>➕</span> Tilføj efter</button>`;
                             pasteButtonsHtml = `<button class="hud-btn" style="opacity: ${pasteOpacity}; pointer-events: ${pastePointer};" onclick="window.handlePasteBranch('${compId}', 'outlet'); document.getElementById('hudContextMenu').remove();"><span>📋</span> Indsæt gren</button>`;
                         }
@@ -588,28 +648,20 @@ canvas.addEventListener('pointerup', (e) => {
                                 <div>Total Tab:</div> <span>${pressure} Pa</span>
                             </div>
                             <div class="hud-actions" style="gap: 4px;">
-                                <button class="hud-btn" onclick="window.showSystemComponentDetails('${compId}'); document.getElementById('hudContextMenu').remove();">
-                                    <span>ℹ️</span> Detaljer
-                                </button>
-                                <button class="hud-btn" onclick="window.handleEditComponent('${compId}'); document.getElementById('hudContextMenu').remove();">
-                                    <span>✏️</span> Rediger
-                                </button>
+                                <button class="hud-btn" onclick="window.showSystemComponentDetails('${compId}'); document.getElementById('hudContextMenu').remove();"><span>ℹ️</span> Detaljer</button>
+                                <button class="hud-btn" onclick="window.handleEditComponent('${compId}'); document.getElementById('hudContextMenu').remove();"><span>✏️</span> Rediger</button>
                                 ${addButtonsHtml}
                                 ${splitBtnHtml}
-                                <button class="hud-btn" onclick="window.handleCopyBranch('${compId}'); document.getElementById('hudContextMenu').remove();">
-                                    <span>📄</span> Kopiér gren
-                                </button>
+                                <button class="hud-btn" onclick="window.handleCopyBranch('${compId}'); document.getElementById('hudContextMenu').remove();"><span>📄</span> Kopiér gren</button>
                                 ${pasteButtonsHtml}
                                 <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 2px 0;"></div>
-                                <button class="hud-btn" style="color: #ff4444; border-color: rgba(255,68,68,0.2);" onclick="window.handleDeleteComponent('${compId}'); document.getElementById('hudContextMenu').remove();">
-                                    <span>❌</span> Slet komponent
-                                </button>
+                                <button class="hud-btn" style="color: #ff4444; border-color: rgba(255,68,68,0.2);" onclick="window.handleDeleteComponent('${compId}'); document.getElementById('hudContextMenu').remove();"><span>❌</span> Slet komponent</button>
                             </div>
                         `;
 
                         document.body.appendChild(hudMenu);
 
-                        // HUD Positionering
+                        // Positionering med skalering
                         const scale = 0.75;
                         let targetX = e.clientX / scale;
                         let targetY = e.clientY / scale;
@@ -1109,7 +1161,7 @@ canvas.addEventListener('pointerup', (e) => {
             nextPos.add(currentDir.clone().multiplyScalar(moveDist));
             midWay.copy(currentPos).add(currentDir.clone().multiplyScalar(moveDist / 2));
         }
-        else if (pType.includes('tee')) {
+else if (pType.includes('tee')) {
             const isBullhead = pType === 'tee_bullhead';
             
             const orientation = comp.properties?.orientation || 'Left';
@@ -1132,17 +1184,17 @@ canvas.addEventListener('pointerup', (e) => {
                 moveDist = Math.max(dIn * 2, 60);
                 const stubLen = moveDist / 2;
 
+                // --- Indløb (Bullhead) ---
                 let gIn = new THREE.CylinderGeometry(dIn/2, dIn/2, stubLen, 32);
                 gIn.translate(0, stubLen/2, 0);
                 gIn.rotateX(Math.PI/2);
                 const meshIn = new THREE.Mesh(gIn, material);
-                meshIn.userData.compId = comp.id;
+                meshIn.userData = { compId: comp.id, port: 'inlet' }; // RETTET: "drawTree3D" fjernet og port tilføjet
                 meshIn.position.copy(currentPos);
                 meshIn.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
                 scene.add(meshIn);
                 
-                // Isolering Indløb
-                addInsulation(meshIn, 'straight_cyl', {r: dIn/2, len: stubLen});
+                if (!isRect) addInsulation(meshIn, 'straight_cyl', {r: dIn/2, len: stubLen});
 
                 const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
 
@@ -1152,6 +1204,7 @@ canvas.addEventListener('pointerup', (e) => {
                 const path2Dir = currentDir.clone().applyAxisAngle(axis, -branchTurn).normalize();
                 const path2Up = nextUp.clone().applyAxisAngle(axis, -branchTurn).normalize();
 
+                // --- Udløb 1 (Gren 1) ---
                 let gB1 = new THREE.CylinderGeometry(dOut1/2, dOut1/2, stubLen, 32);
                 gB1.translate(0, stubLen/2, 0);
                 gB1.rotateX(Math.PI/2);
@@ -1161,9 +1214,9 @@ canvas.addEventListener('pointerup', (e) => {
                 meshB1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path1Dir);
                 scene.add(meshB1);
                 
-                // Isolering Udløb 1
-                addInsulation(meshB1, 'straight_cyl', {r: dOut1/2, len: stubLen});
+                if (!isRect) addInsulation(meshB1, 'straight_cyl', {r: dOut1/2, len: stubLen});
 
+                // --- Udløb 2 (Gren 2) ---
                 let gB2 = new THREE.CylinderGeometry(dOut2/2, dOut2/2, stubLen, 32);
                 gB2.translate(0, stubLen/2, 0);
                 gB2.rotateX(Math.PI/2);
@@ -1173,8 +1226,7 @@ canvas.addEventListener('pointerup', (e) => {
                 meshB2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path2Dir);
                 scene.add(meshB2);
                 
-                // Isolering Udløb 2
-                addInsulation(meshB2, 'straight_cyl', {r: dOut2/2, len: stubLen});
+                if (!isRect) addInsulation(meshB2, 'straight_cyl', {r: dOut2/2, len: stubLen});
 
                 midWay.copy(midPos);
 
@@ -1257,6 +1309,7 @@ canvas.addEventListener('pointerup', (e) => {
                 bMax.max(currentPos); bMax.max(end1Pos); bMax.max(end2Pos);
                 return;
             } else {
+                // --- STANDARD T-STYKKE ---
                 branchDir = currentDir.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
                 branchUp = nextUp.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
 
@@ -1267,6 +1320,7 @@ canvas.addEventListener('pointerup', (e) => {
                 const branchHeight = ((comp.properties?.h_branch || heightMm) / 1000) * PIXELS_PER_METER;
                 const isBranchRect = comp.properties?.w_branch !== undefined || (isRect && comp.properties?.d_branch === undefined);
 
+                // --- Udløb (Ligeud) ---
                 let gS;
                 if (isRect) {
                     gS = new THREE.BoxGeometry(width3D, moveDist, height3D);
@@ -1276,15 +1330,15 @@ canvas.addEventListener('pointerup', (e) => {
                 gS.translate(0, moveDist / 2, 0);
                 gS.rotateX(Math.PI / 2);
                 const meshS = new THREE.Mesh(gS, material);
-                meshS.userData = { compId: comp.id, port: 'outlet_straight' };
+                meshS.userData = { compId: comp.id, port: 'outlet_straight' }; // RETTET: Ren port tildeling
                 meshS.position.copy(currentPos);
                 meshS.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
                 scene.add(meshS);
                 
-                // Isolering Ligeud
                 if (isRect) addInsulation(meshS, 'straight_box', {w: width3D, h: height3D, len: moveDist});
                 else addInsulation(meshS, 'straight_cyl', {r: radius3D, len: moveDist});
 
+                // --- Udløb (Afgrening) ---
                 const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
                 let gB;
                 if (isBranchRect) {
@@ -1295,12 +1349,11 @@ canvas.addEventListener('pointerup', (e) => {
                 gB.translate(0, stubLen / 2, 0);
                 gB.rotateX(Math.PI / 2);
                 const meshB = new THREE.Mesh(gB, material);
-                meshB.userData = { compId: comp.id, port: 'outlet_branch' };
+                meshB.userData = { compId: comp.id, port: 'outlet_branch' }; // RETTET: Ren port tildeling, mesh findes nu
                 meshB.position.copy(midPos);
                 meshB.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), branchDir);
                 scene.add(meshB);
                 
-                // Isolering Afgrening
                 if (isBranchRect) addInsulation(meshB, 'straight_box', {w: branchWidth, h: branchHeight, len: stubLen});
                 else addInsulation(meshB, 'straight_cyl', {r: branchRadius, len: stubLen});
 
@@ -1308,6 +1361,7 @@ canvas.addEventListener('pointerup', (e) => {
                 midWay.copy(midPos);
             }
         }
+
         else {
             moveDist = Math.max(radius3D * 2, 40);
             const g = new THREE.BoxGeometry(radius3D * 2, radius3D * 2, moveDist);
@@ -1623,3 +1677,40 @@ export function zoomAllDiagram() {
     controls.update();
 }
 window.zoomAllDiagram = zoomAllDiagram;
+
+// --- Rydning af 3D Scenen (Ingen DOM-ødelæggelse) ---
+window.clear3DScene = () => {
+    if (!scene) return; // Motoren har aldrig været startet, intet at rydde
+
+    // 1. Nulstil eventuelle markeringer
+    if (typeof window.reset3DHighlight === 'function') window.reset3DHighlight(); 
+
+    // 2. Støvsug scenen for fysiske objekter
+    for (let i = scene.children.length - 1; i >= 0; i--) {
+        let obj = scene.children[i];
+        if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "ArrowHelper") {
+            scene.remove(obj);
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) {
+                // Beskyt vores globale materialCache
+                if (!Object.values(materialCache).includes(obj.material)) {
+                    if (obj.material.map && obj.material.map !== globalFlowTexture) obj.material.map.dispose();
+                    if (obj.material.emissiveMap && obj.material.emissiveMap !== globalFlowTexture) obj.material.emissiveMap.dispose();
+                    obj.material.dispose();
+                }
+            }
+        }
+    }
+
+    // 3. Ryd HTML-labels (teksterne i 3D rummet)
+    const labelsContainer = document.getElementById('diagramLabels');
+    if (labelsContainer) labelsContainer.innerHTML = '';
+    if (typeof labelsMap !== 'undefined' && labelsMap.clear) labelsMap.clear();
+
+    // 4. Render et enkelt, tomt frame så skærmen bliver sort/tom
+    if (renderer && camera) {
+        renderer.render(scene, camera);
+    }
+    
+    console.log("[WebGL] Scenen er støvsuget og klar til nyt projekt.");
+};

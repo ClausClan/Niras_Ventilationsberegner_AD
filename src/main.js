@@ -78,8 +78,13 @@ document.addEventListener('keydown', (e) => {
 
 // --- HUD Handler for at splitte kanaler ---
 window.handleSplitDuct = function(compId) {
+    if (!window.stateManager || typeof window.stateManager.splitDuct !== 'function') {
+        console.error("StateManager eller splitDuct mangler.");
+        return;
+    }
+
     const numPartsStr = prompt("Hvor mange lige store dele vil du splitte kanalen i?", "2");
-    if (!numPartsStr) return;
+    if (!numPartsStr) return; // Brugeren trykkede Annuller
     
     const numParts = parseInt(numPartsStr, 10);
     if (isNaN(numParts) || numParts < 2 || numParts > 50) {
@@ -87,18 +92,54 @@ window.handleSplitDuct = function(compId) {
         return;
     }
 
-    if (window.stateManager && typeof window.stateManager.splitDuct === 'function') {
-        window.stateManager.splitDuct(compId, numParts);
+    // Eksekver graf-manipulationen
+    window.stateManager.splitDuct(compId, numParts);
+    
+    // Gennemtving fysik-beregning (sikrer at termodynamik og tryktab passes igennem de nye noder)
+    if (typeof window.recalculateSystem === 'function') {
+        window.recalculateSystem();
+    }
+    
+    // Ryd op og opdater tabellen (hvis tabellen vises)
+    if (window.ui && typeof window.ui.renderSystem === 'function') {
+        window.ui.renderSystem();
+    }
+};
+
+// --- HUD Handlers for Kopier & Indsæt ---
+
+window.handleCopyBranch = function(compId) {
+    if (window.stateManager && typeof window.stateManager.copyBranch === 'function') {
+        window.stateManager.copyBranch(compId);
         
-        // Gennemtving fysik-beregning og 3D genoptegning
+        // Giv brugeren en lille visuel bekræftelse i UI'et
+        if (window.ui && typeof window.ui.showSaveStatus === 'function') {
+            window.ui.showSaveStatus('Gren kopieret', 'saved');
+        } else {
+            console.log("Gren kopieret til udklipsholder.");
+        }
+    }
+};
+
+window.handlePasteBranch = function(targetCompId, targetPort) {
+    if (!window.clipboardBranch) {
+        alert("Du skal kopiere en gren først.");
+        return;
+    }
+
+    if (window.stateManager && typeof window.stateManager.pasteBranch === 'function') {
+        // Udfør Paste i data-modellen
+        window.stateManager.pasteBranch(targetCompId, targetPort);
+        
+        // Kør fysikmotoren igennem for at opdatere flow, tryk og temperatur
         if (typeof window.recalculateSystem === 'function') {
             window.recalculateSystem();
         }
         
-        // Opdater UI
-        if (window.ui && window.ui.updateUndoRedoUI) {
-            window.ui.updateUndoRedoUI(window.canUndo(), window.canRedo());
-            window.ui.showSaveStatus('Kanal splittet', 'saved');
+        // Genoptegn UI
+        if (window.ui && typeof window.ui.renderSystem === 'function') {
+            window.ui.renderSystem();
+            window.ui.showSaveStatus('Gren indsat', 'saved');
         }
     }
 };
@@ -1951,15 +1992,15 @@ async function initializeApp() {
         });
     }
 
-    document.getElementById('btnNewProject').addEventListener('click', (e) => {
+document.getElementById('btnNewProject').addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
         showConfirm('Er du sikker på, at du vil starte et nyt projekt?', () => {
-            clearSystem();
-            document.getElementById('projectName').value = '';
-            ui.renderSystem();
-            ui.handleComponentTypeChange();
-            projectModal.classList.add('hidden');
+            // 1. Tømmer al data, graf og localStorage
+            clearSystem(); 
+            
+            // 2. Den ultimative, rene nulstilling (Fjerner WebGL Zombier og nulstiller alle mobil-faner)
+            window.location.reload(); 
         });
     });
 

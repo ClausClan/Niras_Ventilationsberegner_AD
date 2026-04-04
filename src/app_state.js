@@ -222,7 +222,8 @@ class StateManager {
 
 addSystemComponent(comp, parentId = null, parentPort = 'outlet', targetPort = 'inlet') {
         if (!comp) return;
-        this.saveState(`Tilføjede komponent ${comp.name}`);
+        
+        if (typeof this.saveState === 'function') this.saveState(`Tilføjede komponent ${comp.name}`);
 
         if (comp.isIncluded === undefined) comp.isIncluded = true;
         const graph = this.getGraph();
@@ -230,11 +231,11 @@ addSystemComponent(comp, parentId = null, parentPort = 'outlet', targetPort = 'i
 
         if (parentId && graph.nodes[parentId]) {
             // --- TRIN 8.9: "Tilføj Mellem" Logik (Edge Interception) ---
-            // Tjek om der allerede findes en forbindelse fra denne port
+            // Tjek om der allerede findes en udgående forbindelse fra den valgte port
             const existingEdgeIndex = graph.edges.findIndex(e => e.from === parentId && e.fromPort === parentPort);
             
             if (existingEdgeIndex !== -1) {
-                // Vi indsætter MELLEM parentId og det eksisterende barn
+                // Vi indsætter MELLEM parentId og det eksisterende barn!
                 const existingEdge = graph.edges[existingEdgeIndex];
                 const originalChildId = existingEdge.to;
                 const originalChildPort = existingEdge.toPort;
@@ -243,13 +244,14 @@ addSystemComponent(comp, parentId = null, parentPort = 'outlet', targetPort = 'i
                 existingEdge.to = comp.id;
                 existingEdge.toPort = targetPort;
 
-                // 2. Opret en ny edge fra den NYE komponent ned til det gamle barn
+                // 2. Bestem hvilken port den NYE komponent bruger til at fortsætte ned til det gamle barn
                 let newOutPort = 'outlet';
-                if (comp.type.startsWith('tee')) {
-                    // Hvis vi indsætter et T-stykke midt i en streng, fortsætter strengen automatisk ud af Ligeud/Gren 1
+                if (comp.type.startsWith('tee_')) {
+                    // Hvis man skyder et T-stykke ind, fortsætter strengen automatisk ud af Ligeud/Gren 1
                     newOutPort = comp.type === 'tee_bullhead' ? 'outlet_path1' : 'outlet_straight';
                 }
 
+                // 3. Opret en ny edge fra den NYE komponent ned til det originale barn
                 graph.edges.push({
                     from: comp.id,
                     fromPort: newOutPort,
@@ -258,7 +260,7 @@ addSystemComponent(comp, parentId = null, parentPort = 'outlet', targetPort = 'i
                 });
                 console.log(`[Graf-Motor] Indsatte ${comp.name} mellem ${parentId} og ${originalChildId}`);
             } else {
-                // Standard tilføjelse i enden af grafen
+                // Standard: Tilføj i enden af en tom port
                 graph.edges.push({
                     from: parentId,
                     fromPort: parentPort,
@@ -268,8 +270,8 @@ addSystemComponent(comp, parentId = null, parentPort = 'outlet', targetPort = 'i
             }
         }
 
-        this.syncGraphToArray();
-        this.persist();
+        if (typeof this.syncGraphToArray === 'function') this.syncGraphToArray();
+        if (typeof this.persist === 'function') this.persist();
     }
 
     // --- Split Kanal Logik ---
@@ -278,36 +280,37 @@ addSystemComponent(comp, parentId = null, parentPort = 'outlet', targetPort = 'i
         const originalDuct = graph.nodes[id];
         
         if (!originalDuct || originalDuct.type !== 'straightDuct') return;
-        if (parts < 2) return;
+        if (parts < 2 || parts > 50) return;
 
-        this.saveState(`Split kanal ${originalDuct.name} i ${parts}`);
+        if (typeof this.saveState === 'function') this.saveState(`Split kanal ${originalDuct.name} i ${parts}`);
 
-        // Beregn ny længde
+        // Beregn ny længde per segment
         const origLength = parseFloat(originalDuct.properties.length);
         const newLength = origLength / parts;
         
         // Opdater den originale kanal (bliver til "Del 1")
         originalDuct.properties.length = newLength;
-        originalDuct.details = `${newLength.toFixed(2)}m`;
-        originalDuct.name = originalDuct.name.includes('(Del') ? originalDuct.name : `${originalDuct.name} (Del 1)`;
+        if (originalDuct.details) originalDuct.details = `${newLength.toFixed(2)}m`;
+        
+        // Rens navnet og tilføj "Del 1"
+        const baseName = originalDuct.name.replace(/\(Del \d+\)/, '').trim();
+        originalDuct.name = `${baseName} (Del 1)`;
 
-        // Find hvem den originale kanal peger på i forvejen
+        // Find hvem den originale kanal peger på
         const outgoingEdges = graph.edges.filter(e => e.from === id);
         
-        // Slet udgående edges midlertidigt (vi sætter dem på det sidste segment senere)
+        // Slet de udgående edges (vi flytter dem til det sidste segment)
         graph.edges = graph.edges.filter(e => e.from !== id);
 
         let currentParentId = id;
 
-        // Opret N-1 nye segmenter
+        // Opret N-1 nye segmenter via Deep Copy
         for (let i = 1; i < parts; i++) {
             const newId = `duct_split_${Date.now()}_${i}`;
-            
-            // Deep copy af den originale kanal for at bevare alle dimensioner, isolering osv.
             const newDuct = JSON.parse(JSON.stringify(originalDuct));
+            
             newDuct.id = newId;
-            // Fjern "(Del 1)" og tilføj det nye del-nummer
-            newDuct.name = newDuct.name.replace(/\(Del \d+\)/, '').trim() + ` (Del ${i+1})`;
+            newDuct.name = `${baseName} (Del ${i + 1})`;
             newDuct.isAutoGenerated = false;
 
             graph.nodes[newId] = newDuct;
@@ -323,7 +326,7 @@ addSystemComponent(comp, parentId = null, parentPort = 'outlet', targetPort = 'i
             currentParentId = newId;
         }
 
-        // Til sidst: Forbind det ALLERSIDSTE nye segment til de oprindelige børn
+        // Forbind det allersidste nye segment til de oprindelige børn
         outgoingEdges.forEach(edge => {
             graph.edges.push({
                 from: currentParentId,
@@ -333,8 +336,112 @@ addSystemComponent(comp, parentId = null, parentPort = 'outlet', targetPort = 'i
             });
         });
 
-        this.syncGraphToArray();
-        this.persist();
+        if (typeof this.syncGraphToArray === 'function') this.syncGraphToArray();
+        if (typeof this.persist === 'function') this.persist();
+        console.log(`[Graf-Motor] Kanal splittet succesfuldt i ${parts} dele.`);
+    }
+
+    // --- Kopiér Gren (Deep Copy) ---
+    copyBranch(startId) {
+        const graph = this.getGraph();
+        if (!graph.nodes[startId]) {
+            console.error("[Graf-Motor] Start-node ikke fundet.");
+            return;
+        }
+
+        const nodesToCopy = {};
+        const edgesToCopy = [];
+        
+        // BFS (Breadth-First Search) for at samle hele den underliggende gren
+        const queue = [startId];
+        
+        while (queue.length > 0) {
+            const currentId = queue.shift();
+            
+            // Gem et Deep Copy af noden
+            nodesToCopy[currentId] = JSON.parse(JSON.stringify(graph.nodes[currentId]));
+            
+            // Find alle udgående edges fra denne node
+            const outgoingEdges = graph.edges.filter(e => e.from === currentId);
+            outgoingEdges.forEach(edge => {
+                edgesToCopy.push(JSON.parse(JSON.stringify(edge)));
+                queue.push(edge.to); // Tilføj barnet til køen
+            });
+        }
+
+        // Gem i den globale clipboard variabel (som diagram.js lytter på)
+        window.clipboardBranch = {
+            rootId: startId,
+            nodes: nodesToCopy,
+            edges: edgesToCopy
+        };
+
+        console.log(`[Graf-Motor] Gren kopieret. Indeholder ${Object.keys(nodesToCopy).length} komponenter og ${edgesToCopy.length} forbindelser.`);
+    }
+
+    // --- Indsæt Gren (Paste) ---
+    pasteBranch(targetId, targetPort) {
+        const clipboard = window.clipboardBranch;
+        if (!clipboard) {
+            console.warn("[Graf-Motor] Udklipsholder er tom.");
+            return;
+        }
+
+        const graph = this.getGraph();
+        
+        // Sikkerhedstjek: Er porten allerede i brug?
+        const portInUse = graph.edges.some(e => e.from === targetId && e.fromPort === targetPort);
+        if (portInUse) {
+            alert("Porten er allerede i brug! Du kan ikke indsætte en hel gren her uden at skabe topologisk kaos. Slet komponenten efter porten først.");
+            return;
+        }
+
+        if (typeof this.saveState === 'function') this.saveState(`Indsatte kopieret gren`);
+
+        const idMapping = {}; // Holder styr på Gamle ID'er -> Nye ID'er
+
+        // 1. Generer nye ID'er og indsæt klonede noder
+        Object.keys(clipboard.nodes).forEach(oldId => {
+            const node = clipboard.nodes[oldId];
+            // Generer et stærkt Vanilla JS UUID
+            const newId = `${node.type}_copy_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+            idMapping[oldId] = newId;
+
+            const clonedNode = JSON.parse(JSON.stringify(node));
+            clonedNode.id = newId;
+            clonedNode.isAutoGenerated = false; // Sikrer at brugeren har ejerskab
+            
+            // Tilføj pænt "(Kopi)" til navnet, men undgå "(Kopi) (Kopi)"
+            if (clonedNode.name && !clonedNode.name.includes('(Kopi)')) {
+                clonedNode.name = `${clonedNode.name} (Kopi)`;
+            }
+
+            graph.nodes[newId] = clonedNode;
+        });
+
+        // 2. Genopbyg de interne forbindelser med de NYE ID'er
+        clipboard.edges.forEach(edge => {
+            graph.edges.push({
+                from: idMapping[edge.from],
+                fromPort: edge.fromPort,
+                to: idMapping[edge.to],
+                toPort: edge.toPort
+            });
+        });
+
+        // 3. Forbind den nye grens ROD til mål-komponenten
+        const newRootId = idMapping[clipboard.rootId];
+        graph.edges.push({
+            from: targetId,
+            fromPort: targetPort,
+            to: newRootId,
+            toPort: 'inlet' // Vi antager altid at kopien flettes ind i sin "inlet"
+        });
+
+        console.log(`[Graf-Motor] Gren indsat på ${targetId} port: ${targetPort}`);
+
+        if (typeof this.syncGraphToArray === 'function') this.syncGraphToArray();
+        if (typeof this.persist === 'function') this.persist();
     }
 
     // NYT: Hjælpefunktion til at slette et helt undertræ af komponenter
