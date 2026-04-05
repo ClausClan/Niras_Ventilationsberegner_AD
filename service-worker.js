@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ventcalc-adv-v6'; // Versionsnummer opdateret
+const CACHE_NAME = 'ventcalc-adv-v7'; // Versionsnummer opdateret
 
 // Basis-URL for GitHub Pages. 
 const BASE_URL = '/Niras_Ventilationsberegner_AD';
