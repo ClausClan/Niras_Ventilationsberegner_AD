@@ -5,17 +5,16 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 let diagramSettings = {
     colorMode: 'default',
     labels: {
-        name: true,
-        dim: false,
-        flow: false,
-        vel: false,
-        press: false,
-        pam: false,
-        temp: false,
-        isoMm: false
+        name: true, dim: false, flow: false, vel: false, 
+        press: false, pam: false, temp: false, isoMm: false
     },
     textSettingsExpanded: false, 
-    effectsSettingsExpanded: false, // NY: Holder styr på om effekter er klappet ud
+    effectsSettingsExpanded: false,
+    gridSettingsExpanded: false, // NY: Holder styr på grid-menuen
+    grid: {
+        spacingMm: 1000, // Standard 1 meter mellem linjer
+        elevationMm: -500 // Standard 0.5m under center (kote)
+    },
     animateFlow: false,          
     showInsulation: false,       
     threshold: 0
@@ -42,6 +41,14 @@ window.updateDiagramSettings = () => {
 
     diagramSettings.animateFlow = check('chk_anim_flow');
     diagramSettings.showInsulation = check('chk_show_iso');
+
+    const gridSpacing = document.getElementById('num_grid_spacing');
+    if (gridSpacing) diagramSettings.grid.spacingMm = parseFloat(gridSpacing.value) || 1000;
+
+    const gridElevation = document.getElementById('num_grid_elevation');
+    if (gridElevation) diagramSettings.grid.elevationMm = parseFloat(gridElevation.value) || 0;
+
+    renderDiagram(true);
 
     const allChecked = Object.values(diagramSettings.labels).every(val => val);
     const lblAll = document.getElementById('lbl_all');
@@ -77,6 +84,16 @@ window.toggleEffectsSettings = () => {
     if (content && icon) {
         content.style.display = diagramSettings.effectsSettingsExpanded ? 'block' : 'none';
         icon.innerText = diagramSettings.effectsSettingsExpanded ? '▼' : '▶';
+    }
+};
+
+window.toggleGridSettings = () => {
+    diagramSettings.gridSettingsExpanded = !diagramSettings.gridSettingsExpanded;
+    const content = document.getElementById('gridSettingsContent');
+    const icon = document.getElementById('gridSettingsIcon');
+    if (content && icon) {
+        content.style.display = diagramSettings.gridSettingsExpanded ? 'block' : 'none';
+        icon.innerText = diagramSettings.gridSettingsExpanded ? '▼' : '▶';
     }
 };
 
@@ -267,66 +284,6 @@ export function renderDiagram(keepControls = false) {
     const components = fullState.systemComponents || getSystemComponents();
     const isExhaust = fullState.systemType === 'merging';
 
-    if (components.length === 0) {
-        // 1. Sørg for at WebGL containeren eksisterer
-        if (!document.getElementById('diagramWebglContainer') && renderer) {
-             container.innerHTML = '<div id="diagramWebglContainer" style="width:100%; height:100%; min-height: 500px; background:#111;"></div><div id="diagramLabels" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:50;"></div>';
-             document.getElementById('diagramWebglContainer').appendChild(renderer.domElement);
-        }
-
-        // 2. Ryd gamle labels
-        const labelsContainer = document.getElementById('diagramLabels');
-        if (labelsContainer) labelsContainer.innerHTML = '';
-        if (typeof labelsMap !== 'undefined') labelsMap.clear();
-
-        // 3. Støvsug 3D scenen
-        if (scene) {
-            for (let i = scene.children.length - 1; i >= 0; i--) {
-                let obj = scene.children[i];
-                if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "GridHelper") {
-                    scene.remove(obj);
-                    if (obj.geometry) obj.geometry.dispose();
-                    if (obj.material) obj.material.dispose();
-                }
-            }
-
-            // 4. Byg "Empty State" - Et uendeligt CAD-gitter
-            const gridHelper = new THREE.GridHelper(2000, 40, 0x00A4E0, 0x333333);
-            gridHelper.position.set(0, -20, 0);
-            gridHelper.material.opacity = 0.4;
-            gridHelper.material.transparent = true;
-            scene.add(gridHelper);
-
-            // 5. Byg "VentCalculatorADV" Ikonet (Et stiliseret Neon Rør/Ventilator)
-            const iconGeo = new THREE.CylinderGeometry(30, 30, 60, 16);
-            const iconMat = new THREE.MeshBasicMaterial({ color: 0x00E4FF, wireframe: true, transparent: true, opacity: 0.6 });
-            const iconMesh = new THREE.Mesh(iconGeo, iconMat);
-            iconMesh.rotation.x = Math.PI / 2;
-            scene.add(iconMesh);
-
-            // 6. Tilføj svævende tekst over ikonet
-            const div = document.createElement('div');
-            div.style.position = 'absolute';
-            div.style.color = '#00E4FF';
-            div.style.textAlign = 'center';
-            div.style.fontWeight = 'bold';
-            div.style.textShadow = '0px 0px 8px #00E4FF';
-            div.style.fontFamily = 'monospace';
-            div.style.pointerEvents = 'none';
-            div.innerHTML = '<span style="font-size: 1.2rem;">VentCalculatorADV</span><br><span style="font-size: 0.8rem; color: #aaa;">Venter på startkomponent...</span>';
-            labelsContainer.appendChild(div);
-            labelsMap.set(div, new THREE.Vector3(0, 50, 0));
-
-            // 7. Sæt kameraet til en flot isometrisk vinkel
-            if (camera && controls) {
-                controls.target.set(0, 0, 0);
-                camera.position.set(150, 150, 150);
-                camera.lookAt(0, 0, 0);
-            }
-        }
-        return; // Afbryd resten af render funktionen, da der ikke er et træ at tegne
-    }
-
     let webglContainer = document.getElementById('diagramWebglContainer');
 
     if (!webglContainer || !renderer) {
@@ -400,6 +357,24 @@ export function renderDiagram(keepControls = false) {
                          <label style="display: flex; align-items: center; font-size: 0.75rem; cursor: pointer; color: white;">
                             <input type="checkbox" id="lbl_all" style="margin-right: 6px; cursor: pointer;" onchange="window.toggleAllLabels(this)" ${Object.values(diagramSettings.labels).every(v=>v) ? 'checked' : ''}> <strong>Vis alt</strong>
                          </label>
+                     </div>
+                 </div>
+                 <!-- Foldbar Grid settings -->
+                 <div>
+                     <div style="font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; color: var(--text-muted-color); text-transform: uppercase; cursor: pointer; display: flex; justify-content: space-between; align-items: center; padding: 2px 0; text-align: left;" onclick="window.toggleGridSettings()">
+                        <span>Grid (Gitter)</span>
+                        <span id="gridSettingsIcon">${diagramSettings.gridSettingsExpanded ? '▼' : '▶'}</span>
+                     </div>
+                     
+                     <div id="gridSettingsContent" style="background: rgba(0,0,0,0.4); padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); display: ${diagramSettings.gridSettingsExpanded ? 'block' : 'none'};">
+                         <div style="margin-bottom: 6px;">
+                             <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 2px;">Afstand mellem linjer (mm)</label>
+                             <input type="number" id="num_grid_spacing" class="input-field" step="100" style="width: 100%; font-size: 0.75rem; padding: 2px 4px; background: #222; color: white; border: 1px solid #444;" value="${diagramSettings.grid.spacingMm}" onchange="window.updateDiagramSettings()">
+                         </div>
+                         <div>
+                             <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 4px;">Kote / Y-position (mm)</label>
+                             <input type="number" id="num_grid_elevation" class="input-field" step="100" style="width: 100%; font-size: 0.75rem; padding: 2px 4px; background: #222; color: white; border: 1px solid #444;" value="${diagramSettings.grid.elevationMm}" onchange="window.updateDiagramSettings()">
+                         </div>
                      </div>
                  </div>
             </div>
@@ -727,11 +702,13 @@ export function renderDiagram(keepControls = false) {
         renderer.setSize(webglContainer.clientWidth, webglContainer.clientHeight);
     }
 
-    // RYDER OP (Husk at slette klonede teksturer)
+// ==========================================
+    // 1. RYDDER OP I SCENEN
+    // ==========================================
     window.reset3DHighlight(); 
     for (let i = scene.children.length - 1; i >= 0; i--) {
         let obj = scene.children[i];
-        if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "ArrowHelper") {
+        if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "ArrowHelper" || obj.type === "GridHelper") {
             scene.remove(obj);
             if (obj.geometry) obj.geometry.dispose();
             if (obj.material) {
@@ -745,8 +722,57 @@ export function renderDiagram(keepControls = false) {
     }
 
     const labelsContainer = document.getElementById('diagramLabels');
-    labelsContainer.innerHTML = '';
-    labelsMap.clear();
+    if (labelsContainer) labelsContainer.innerHTML = '';
+    if (typeof labelsMap !== 'undefined') labelsMap.clear();
+
+    // ==========================================
+    // 2. TEGN ALTID CAD GITTER (GRID)
+    // ==========================================
+    const PIXELS_PER_METER = 100;
+    const spacing3D = (Math.max(10, diagramSettings.grid.spacingMm) / 1000) * PIXELS_PER_METER;
+    const elevation3D = (diagramSettings.grid.elevationMm / 1000) * PIXELS_PER_METER;
+    const gridSize3D = 6000;
+    const divisions = Math.floor(gridSize3D / spacing3D);
+    
+    const gridHelper = new THREE.GridHelper(gridSize3D, divisions, 0x00A4E0, 0x333333);
+    gridHelper.position.set(0, elevation3D, 0);
+    gridHelper.material.opacity = 0.4;
+    gridHelper.material.transparent = true;
+    scene.add(gridHelper);
+
+    // ==========================================
+    // 3. EMPTY STATE (Logo)
+    // ==========================================
+    if (components.length === 0) {
+        const iconGeo = new THREE.CylinderGeometry(30, 30, 60, 16);
+        const iconMat = new THREE.MeshBasicMaterial({ color: 0x00E4FF, wireframe: true, transparent: true, opacity: 0.6 });
+        const iconMesh = new THREE.Mesh(iconGeo, iconMat);
+        iconMesh.rotation.x = Math.PI / 2;
+        scene.add(iconMesh);
+
+        const div = document.createElement('div');
+        div.style.position = 'absolute';
+        div.style.color = '#00E4FF';
+        div.style.textAlign = 'center';
+        div.style.fontWeight = 'bold';
+        div.style.textShadow = '0px 0px 8px #00E4FF';
+        div.style.fontFamily = 'monospace';
+        div.style.pointerEvents = 'none';
+        div.innerHTML = '<span style="font-size: 1.2rem;">VentCalculatorADV</span><br><span style="font-size: 0.8rem; color: #aaa;">Venter på startkomponent...</span>';
+        if (labelsContainer) labelsContainer.appendChild(div);
+        labelsMap.set(div, new THREE.Vector3(0, 50, 0));
+
+        if (camera && controls) {
+            controls.target.set(0, 0, 0);
+            camera.position.set(150, 150, 150);
+            camera.lookAt(0, 0, 0);
+            controls.update();
+        }
+
+        if (renderer && camera) renderer.render(scene, camera);
+        
+        return; // Afbryd funktionen her - der er ingen rør at tegne
+    }
 
     let maxV = -Infinity, minV = Infinity, maxP = -Infinity, minP = Infinity, maxT = -Infinity, minT = Infinity;
     components.forEach(c => {
@@ -896,7 +922,6 @@ export function renderDiagram(keepControls = false) {
         return materialCache[key];
     };
 
-    const PIXELS_PER_METER = 100;
     let bMin = new THREE.Vector3(Infinity, Infinity, Infinity);
     let bMax = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
 
