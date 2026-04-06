@@ -817,68 +817,6 @@
             color: var(--text-muted-color);
         }
 
-        @media print {
-
-            /* Skjul hele app'en, når der printes */
-            body>.container,
-            .app-footer,
-            .modal {
-                display: none !important;
-            }
-
-            /* Vis kun print-containeren */
-            #print-container {
-                display: block !important;
-            }
-
-            /* Grundlæggende styling for print-dokumentet */
-            .print-table {
-                width: 100%;
-                border-collapse: collapse;
-                margin-top: 20px;
-                font-size: 10pt;
-            }
-
-            /* NYT: Nulstil styling for overskrifter ved print */
-            #print-container h1,
-            #print-container h2,
-            #print-container h3 {
-                color: #000000;
-                /* Gør teksten helt sort */
-                text-shadow: none;
-                /* Fjerner enhver glød-effekt */
-            }
-
-            .print-table {
-                width: 100%;
-                border-collapse: collapse;
-                margin-top: 20px;
-                font-size: 10pt;
-            }
-
-            .print-table th,
-            .print-table td {
-                border: 1px solid #ccc;
-                padding: 8px;
-                text-align: left;
-            }
-
-            .print-table th {
-                background-color: #f2f2f2;
-                font-weight: bold;
-            }
-
-            .print-table tfoot td {
-                font-weight: bold;
-            }
-
-            .print-summary {
-                margin-top: 20px;
-                padding-top: 10px;
-                border-top: 2px solid #000;
-            }
-        }
-
         /* Skjuler print-containeren som standard */
         #print-container {
             display: none;
@@ -1377,3 +1315,73 @@
             box-shadow: 0 0 10px rgba(0, 228, 255, 0.4);
             transform: translateX(4px); /* Lille slide-effekt ved hover */
         }
+
+/* ==========================================
+   BEREGNINGSRAPPORT (PRINT/PDF)
+   ========================================== */
+
+@media print {
+    /* 1. Skjul absolut ALT i appen, undtagen vores print-container */
+    body > *:not(#print-container) { 
+        display: none !important; 
+    }
+    
+    /* 2. Opsætning af det hvide A4-papir */
+    #print-container { 
+        display: block !important; 
+        position: absolute; 
+        left: 0; 
+        top: 0; 
+        width: 100%; 
+        background: white;
+        color: black;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    
+    /* 3. Nulstil styling for overskrifter */
+    #print-container h1,
+    #print-container h2,
+    #print-container h3 {
+        color: #000000;
+        text-shadow: none; 
+        margin-top: 20px;
+    }
+
+    /* 4. Undgå overskåret indhold mellem siderne */
+    #print-container tr, 
+    #print-container img { 
+        page-break-inside: avoid; 
+    }
+
+    /* 5. Professionel Tabel Styling */
+    #print-container table.print-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+        font-size: 10pt; 
+    }
+
+    #print-container table.print-table th,
+    #print-container table.print-table td {
+        border: 1px solid #ccc;
+        padding: 8px;
+        text-align: left;
+    }
+
+    #print-container table.print-table th {
+        background-color: #f2f2f2 !important;
+        font-weight: bold;
+        /* Tvinger printeren til at beholde den grå baggrundsfarve på headeren */
+        -webkit-print-color-adjust: exact !important; 
+        print-color-adjust: exact !important;
+    }
+
+    #print-container table.print-table tfoot td {
+        font-weight: bold;
+    }
+
+    /* 6. Fjern browserens standard url/dato marginer */
+    @page { 
+        margin: 1.5cm; 
+    }
+}

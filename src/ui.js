@@ -332,11 +332,10 @@ export function getSystemFormHtml() {
                             <button type="button" class="system-menu-btn" onclick="window.toggleSystemMenu()">&#8942;</button>
                             <div id="systemMenu" class="system-menu-dropdown hidden">
                                 <button type="button" id="btnMenuNew" class="menu-item-btn">Ny beregning</button>
-                                <button type="button" id="btnMenuLoad" class="menu-item-btn">Hent projekt...</button>
-                                <button type="button" id="btnMenuSaveAs" class="menu-item-btn">Gem som (projekt)...</button>
                                 <hr style="margin: 5px 0; border: 0; border-top: 1px solid var(--border-color);">
                                 <button type="button" id="btnMenuSaveFile" class="menu-item-btn">Gem fil (JSON)...</button>
                                 <button type="button" id="btnMenuLoadFile" class="menu-item-btn">Hent fil (JSON)...</button>
+                                <hr style="margin: 5px 0; border: 0; border-top: 1px solid var(--border-color);">
                                 <button type="button" id="btnMenuPrint" class="menu-item-btn">Skriv ud dokumentation...</button>
                             </div>
                         </div>
@@ -1007,7 +1006,11 @@ export function toggleSystemMenu() {
 
 export function printDocumentation(event) {
     if (event) event.preventDefault();
-    toggleSystemMenu();
+    
+    if (typeof window.toggleSystemMenu === 'function') {
+        const menu = document.getElementById('systemMenuModal');
+        if (menu && !menu.classList.contains('hidden')) window.toggleSystemMenu();
+    }
 
     const systemTree = window.stateManager ? window.stateManager.getSystemTree() : [];
     
@@ -1016,55 +1019,82 @@ export function printDocumentation(event) {
         return;
     }
 
+    // ==========================================
+    // 1. Tag et billede af 3D diagrammet
+    // ==========================================
+    let diagramImage = '';
+    if (typeof window.getDiagramSnapshot === 'function') {
+        diagramImage = window.getDiagramSnapshot();
+    }
+
+    // ==========================================
+    // 2. PATHFINDER: Find Kritisk Vej OG husk ruten!
+    // ==========================================
     function calculateCriticalPath(node) {
-        if (!node || node.isIncluded === false) return { loss: 0 };
+        if (!node || node.isIncluded === false) return { loss: 0, path: [] };
+        
         const pType = node.fittingType || (node.properties && node.properties.type) || node.type || '';
         const isTee = pType.startsWith('tee_');
         const pLoss = (node.state && node.state.pressureLoss) ? node.state.pressureLoss : 0;
+        
         let maxPathLoss = 0;
+        let bestPath = []; // NYT: Husker hvilken gren der gav det højeste tab
 
         if (isTee) {
-            // Check branch first, then straight to match display order
             const ports = ['outlet_branch', 'outlet_straight', 'outlet_path1', 'outlet_path2'];
             ports.forEach(port => {
                 let portLoss = (node.state && node.state.portPressureLoss && node.state.portPressureLoss[port] !== undefined) ? node.state.portPressureLoss[port] : 0;
                 let childLoss = 0;
+                let childPath = [];
+                
                 if (node.children && node.children[port] && node.children[port].length > 0) {
-                    childLoss = calculateCriticalPath(node.children[port][0]).loss;
+                    const childResult = calculateCriticalPath(node.children[port][0]);
+                    childLoss = childResult.loss;
+                    childPath = childResult.path;
                 }
-                if (portLoss + childLoss > maxPathLoss) maxPathLoss = portLoss + childLoss;
+                
+                if (portLoss + childLoss > maxPathLoss) {
+                    maxPathLoss = portLoss + childLoss;
+                    bestPath = childPath;
+                }
             });
-            return { loss: maxPathLoss };
+            // Returnerer T-stykket + resten af den hårdeste vej
+            return { loss: maxPathLoss, path: [node, ...bestPath] }; 
         } else {
             if (node.children) {
                 Object.values(node.children).forEach(childArray => {
                     childArray.forEach(child => {
-                        let childLoss = calculateCriticalPath(child).loss;
-                        if (childLoss > maxPathLoss) maxPathLoss = childLoss;
+                        const childResult = calculateCriticalPath(child);
+                        if (childResult.loss > maxPathLoss) {
+                            maxPathLoss = childResult.loss;
+                            bestPath = childResult.path;
+                        }
                     });
                 });
             }
-            return { loss: pLoss + maxPathLoss };
+            return { loss: pLoss + maxPathLoss, path: [node, ...bestPath] };
         }
     }
 
     const criticalResult = calculateCriticalPath(systemTree[0]);
     const globalCriticalPressureDrop = criticalResult.loss;
+    const criticalPathNodes = criticalResult.path;
 
-    let tableRows = '';
-    function traversePrint(c, depth, labelPath, numPrefix = "", numCounter = 1) {
-        const currentNum = numPrefix ? `${numPrefix}.${numCounter}` : `${numCounter}`;
+    // ==========================================
+    // 3. HJÆLPEFUNKTION: Byg en HTML-række (DRY-princip)
+    // ==========================================
+    function buildRowHtml(c, depth, labelPath, currentNum, isCritical = false) {
         const state = c.state || {};
         const props = c.properties || {};
         const data = state.calculationDetails || {};
+        const pType = c.fittingType || props.type || c.type || '';
         
         const pressureLoss = state.pressureLoss || 0;
         const velocity = state.velocity ? formatLocalFloat(state.velocity, 2) : '-';
-
         let airflowIn = state.airflow_in || c.airflow || 0;
         let airflowOutText = '-';
-        const pType = c.fittingType || props.type || c.type || '';
 
+        // Beregn Ud-Flow tekst (Afgreninger etc.)
         if (pType.startsWith('tee_')) {
             const isBullhead = pType === 'tee_bullhead';
             if (props.flowType === 'merging') {
@@ -1084,28 +1114,20 @@ export function printDocumentation(event) {
             airflowOutText = state.airflow_out ? formatLocalFloat(state.airflow_out['outlet'] || airflowIn, 0) : formatLocalFloat(airflowIn, 0);
         }
 
+        // Temperatur
         let tIn = parseFloat(state.temperature_in);
         let tOutRaw = state.temperature_out ? 
             (state.temperature_out['outlet'] !== undefined ? state.temperature_out['outlet'] : 
              (state.temperature_out['outlet_straight'] !== undefined ? state.temperature_out['outlet_straight'] : 
-              state.temperature_out['outlet_path1'])) 
-            : undefined;
+              state.temperature_out['outlet_path1'])) : undefined;
         let tOut = parseFloat(tOutRaw);
         let tempText = '-';
-        
         if (!isNaN(tIn) && !isNaN(tOut)) {
-            if (Math.abs(tIn - tOut) > 0.05) {
-                tempText = `${formatLocalFloat(tIn, 1)} &rarr; ${formatLocalFloat(tOut, 1)}`;
-            } else {
-                tempText = `${formatLocalFloat(tIn, 1)}`;
-            }
+            tempText = Math.abs(tIn - tOut) > 0.05 ? `${formatLocalFloat(tIn, 1)} &rarr; ${formatLocalFloat(tOut, 1)}` : `${formatLocalFloat(tIn, 1)}`;
         }
 
-        let isoText = '-';
-        if (props.isoThick !== undefined && props.isoThick > 0) {
-            isoText = `${props.isoThick} mm<br><span style="font-size:0.8em;color:#666;">λ: ${props.isoLambda || 0.037}</span>`;
-        }
-
+        // Isolering og Detaljer
+        let isoText = props.isoThick > 0 ? `${props.isoThick} mm<br><span style="font-size:0.8em;color:#666;">λ: ${props.isoLambda || 0.037}</span>` : '-';
         let detailsText = '-';
         if (c.type === 'straightDuct' && data.pressureDrop) {
             detailsText = `λ: ${formatLocalFloat(data.lambda, 4)}<br><span style="font-size:0.8em;color:#666;">${formatLocalFloat(data.pressureDrop, 2)} Pa/m</span>`;
@@ -1115,13 +1137,17 @@ export function printDocumentation(event) {
             detailsText = `ζ: ${formatLocalFloat(data.zeta, 3)}`;
         }
 
+        // Opbygning
         const indent = Math.max(0, depth * 20);
-        let treePrefix = labelPath ? `<div style="font-size:10px; color:#555; margin-bottom:2px;">&#8627; ${labelPath}</div>` : '';
+        let treePrefix = labelPath && !isCritical ? `<div style="font-size:10px; color:#555; margin-bottom:2px;">&#8627; ${labelPath}</div>` : '';
         let nameHtml = `<strong><span style="color:#0084ff;">${currentNum}</span>. ${c.name}</strong><br><span style="font-size:0.8em;color:#666;">${c.details || ''}</span>`;
+        
+        // Let gul farve til kritisk vej for at adskille dem
+        const rowStyle = isCritical ? 'background-color: #fff9e6;' : '';
 
-        tableRows += `
-            <tr>
-                <td style="padding-left: ${indent + 8}px;">
+        return `
+            <tr style="${rowStyle}">
+                <td style="padding-left: ${isCritical ? 8 : indent + 8}px;">
                     ${treePrefix}
                     ${nameHtml}
                 </td>
@@ -1133,45 +1159,44 @@ export function printDocumentation(event) {
                 <td><strong>${formatLocalFloat(pressureLoss, 2)}</strong></td>
             </tr>
         `;
+    }
+
+    // ==========================================
+    // 4. Byg Tabellerne (Kritisk + Fuld Træ)
+    // ==========================================
+    
+    // TABEL 1: Den Kritiske Vej (Flad liste)
+    let criticalTableRows = '';
+    criticalPathNodes.forEach((node, index) => {
+        criticalTableRows += buildRowHtml(node, 0, '', `${index + 1}`, true);
+    });
+
+    // TABEL 2: Det Fulde Træ (Rekursiv liste)
+    let fullTreeRows = '';
+    function traversePrint(c, depth, labelPath, numPrefix = "", numCounter = 1) {
+        const currentNum = numPrefix ? `${numPrefix}.${numCounter}` : `${numCounter}`;
+        const pType = c.fittingType || (c.properties && c.properties.type) || c.type || '';
+        
+        fullTreeRows += buildRowHtml(c, depth, labelPath, currentNum, false);
 
         let expectedPorts = ['outlet'];
         if (pType.startsWith('tee_')) {
-            if (pType === 'tee_bullhead') {
-                expectedPorts = ['outlet_path1', 'outlet_path2'];
-            } else {
-                expectedPorts = ['outlet_branch', 'outlet_straight'];
-            }
+            expectedPorts = pType === 'tee_bullhead' ? ['outlet_path1', 'outlet_path2'] : ['outlet_branch', 'outlet_straight'];
         } else if (c.type === 'terminalUnit') {
-            // --- NYT: TRIN 8 - Armaturer er "Leaf Nodes", de har ingen udgange! ---
             expectedPorts = [];
         }
 
-        // I udskriften tegner vi altid det fulde træ, uanset om det er foldet ind i UI'et
         expectedPorts.forEach(portName => {
-            let childLabel = '';
-            let childDepth = depth;
-            let nextPrefix = numPrefix;
-            let nextCounter = numCounter + 1;
+            let childLabel = ''; let childDepth = depth; let nextPrefix = numPrefix; let nextCounter = numCounter + 1;
 
             if (portName === 'outlet_straight' || portName === 'outlet') {
-                childLabel = '';
-                childDepth = depth; // Ligeud rykkes ikke ind
-                nextPrefix = numPrefix;
+                childDepth = depth; nextPrefix = numPrefix;
             } else if (portName === 'outlet_branch') {
-                childLabel = 'Afgrening';
-                childDepth = depth + 1; // Afgrening rykkes ind
-                nextPrefix = currentNum;
-                nextCounter = 1;
+                childLabel = 'Afgrening'; childDepth = depth + 1; nextPrefix = currentNum; nextCounter = 1;
             } else if (portName === 'outlet_path1') {
-                childLabel = 'Gren 1';
-                childDepth = depth + 1;
-                nextPrefix = currentNum + "a";
-                nextCounter = 1;
+                childLabel = 'Gren 1'; childDepth = depth + 1; nextPrefix = currentNum + "a"; nextCounter = 1;
             } else if (portName === 'outlet_path2') {
-                childLabel = 'Gren 2';
-                childDepth = depth + 1;
-                nextPrefix = currentNum + "b";
-                nextCounter = 1;
+                childLabel = 'Gren 2'; childDepth = depth + 1; nextPrefix = currentNum + "b"; nextCounter = 1;
             }
 
             if (c.children && c.children[portName] && c.children[portName].length > 0) {
@@ -1183,78 +1208,109 @@ export function printDocumentation(event) {
     }
 
     if (systemTree.length > 0) {
-        systemTree.forEach((root, index) => {
-            traversePrint(root, 0, '', "", index + 1);
-        });
+        systemTree.forEach((root, index) => traversePrint(root, 0, '', "", index + 1));
     }
 
+    // ==========================================
+    // 5. Opbyg Samlet HTML
+    // ==========================================
     const projectName = document.getElementById('projectName').value;
     const startAirflow = document.getElementById('system_airflow').value;
-
     const systemTypeInput = document.querySelector('input[name="systemFlowType"]:checked');
-    let systemTypeLabel = 'Ukendt';
-    if (systemTypeInput) {
-        const label = document.querySelector(`label[for="${systemTypeInput.id}"]`);
-        if (label) systemTypeLabel = label.textContent;
-    }
-
+    let systemTypeLabel = systemTypeInput ? document.querySelector(`label[for="${systemTypeInput.id}"]`).textContent : 'Ukendt';
     const temperature = document.getElementById('temperature').value;
     const printDate = new Date().toLocaleString('da-DK');
-
     const footerP = document.querySelector('.app-footer p');
     const appVersionText = footerP ? footerP.textContent.split(' --- ')[0] : 'Ventilationsberegner';
 
     const printHtml = `
         <style>
-            .print-table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; font-family: sans-serif; }
+            .print-table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; font-family: sans-serif; page-break-inside: avoid; }
             .print-table th, .print-table td { border: 1px solid #ccc; padding: 8px; text-align: left; vertical-align: middle; }
             .print-table th { background-color: #f5f5f5; }
+            .section-title { margin-top: 30px; border-bottom: 2px solid #ccc; padding-bottom: 5px; }
             body { font-family: sans-serif; color: #333; }
         </style>
+        
         <h1>Dokumentation for systemberegning</h1>
         ${projectName ? `<h2>Projekt: ${projectName}</h2>` : ''}
         <p>Genereret: ${printDate}</p>
+        
         <h3>Grunddata</h3>
         <p><strong>Start luftmængde:</strong> ${startAirflow} m³/h</p>
         <p><strong>Systemtype:</strong> ${systemTypeLabel}</p>
         <p><strong>Lufttemperatur (Start):</strong> ${temperature} °C</p>
         
+        ${diagramImage ? `<h3 class="section-title">3D System Diagram</h3><img src="${diagramImage}" style="max-width: 100%; max-height: 400px; object-fit: contain; border: 1px solid #ccc; margin-bottom: 20px;" alt="3D Visualisering">` : ''}
+        
+        <h3 class="section-title" style="color: #d32f2f;">1. Den Kritiske Streng</h3>
+        <p style="font-size: 11px; font-style: italic;">Ruten i anlægget med det højeste samlede tryktab.</p>
         <table class="print-table">
             <thead>
                 <tr>
-                    <th>Komponent (Træstruktur)</th>
+                    <th>Komponent (Rute)</th>
                     <th>Luftmængde [m³/h]</th>
                     <th>Hastighed [m/s]</th>
-                    <th>Temp. (Ind &rarr; Ud) [°C]</th>
+                    <th>Temp. [°C]</th>
                     <th>Isolering</th>
                     <th>Detaljer (&zeta;/&lambda;)</th>
                     <th>Tryktab [Pa]</th>
                 </tr>
             </thead>
             <tbody>
-                ${tableRows}
+                ${criticalTableRows || '<tr><td colspan="7">Ingen rute fundet.</td></tr>'}
             </tbody>
             <tfoot>
                 <tr>
-                    <td colspan="6" style="text-align:right;"><strong>Samlet systemtryktab (Kritisk vej)</strong></td>
-                    <td><strong>${formatLocalFloat(globalCriticalPressureDrop, 2)} Pa</strong></td>
+                    <td colspan="6" style="text-align:right;"><strong>Totalt Kritisk Tryktab</strong></td>
+                    <td style="color: #d32f2f;"><strong>${formatLocalFloat(globalCriticalPressureDrop, 2)} Pa</strong></td>
                 </tr>
             </tfoot>
         </table>
+
+        <h3 class="section-title">2. Fuldt Systemtræ (Alle komponenter)</h3>
+        <table class="print-table">
+            <thead>
+                <tr>
+                    <th>Komponent (Træstruktur)</th>
+                    <th>Luftmængde [m³/h]</th>
+                    <th>Hastighed [m/s]</th>
+                    <th>Temp. [°C]</th>
+                    <th>Isolering</th>
+                    <th>Detaljer (&zeta;/&lambda;)</th>
+                    <th>Tryktab [Pa]</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${fullTreeRows}
+            </tbody>
+        </table>
         
         <div style="margin-top: 30px; font-size: 8pt; color: #777;">
-            <p>Beregningen er foretaget med NIRAS Ventilationsberegner (${appVersionText})</p>
+            <p>Beregningen er foretaget med ${appVersionText}</p>
         </div>
     `;
+
+    // Fjern evt. gl. print overlay
+    let existingPrint = document.getElementById('print-container');
+    if (existingPrint) existingPrint.remove();
 
     const printContainer = document.createElement('div');
     printContainer.id = 'print-container';
     printContainer.innerHTML = printHtml;
     document.body.appendChild(printContainer);
 
-    window.print();
-
-    document.body.removeChild(printContainer);
+    // ==========================================
+    // 6. Asynkron Print for at undgå frysning
+    // ==========================================
+    setTimeout(() => {
+        window.print();
+        setTimeout(() => {
+            if (document.body.contains(printContainer)) {
+                document.body.removeChild(printContainer);
+            }
+        }, 500);
+    }, 250);
 }
 
 // --- Dynamiske UI Opdateringer ---

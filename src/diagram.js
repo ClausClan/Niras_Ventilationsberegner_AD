@@ -30,7 +30,8 @@ let diagramSettings = {
         offsetZ_mm: 0,
         isSettingOrigin: false,
         calibrationState: 0, // 0 = inaktiv, 1 = venter på punkt 1, 2 = venter på punkt 2
-        calibPt1: null
+        calibPt1: null,
+        pdfData: null
     }
 };
 
@@ -94,11 +95,34 @@ window.handlePdfUpload = async (event) => {
     try {
         const canvas = await renderPdfToCanvas(file);
         diagramSettings.pdfConfig.active = true;
+        
+        // GEM PDF'en som Base64 tekst, så den kommer med i .json eksporten!
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            diagramSettings.pdfConfig.pdfData = e.target.result; 
+        };
+        reader.readAsDataURL(file);
+
         window.applyPdfUnderlay(canvas);
-        if (statusEl) statusEl.innerText = "PDF Indlæst & Klar!";
+        if (statusEl) statusEl.innerText = "PDF Indlæst & Gemt i projektet!";
     } catch (err) {
         console.error(err);
         if (statusEl) statusEl.innerHTML = "<span style='color:var(--error-color)'>Fejl ved indlæsning. Er det en valid PDF?</span>";
+    }
+};
+
+window.removePdfUnderlay = () => {
+    const fileInput = document.getElementById('pdfFileInput');
+    if (fileInput) fileInput.value = '';
+    
+    diagramSettings.pdfConfig.active = false;
+    diagramSettings.pdfConfig.pdfData = null; // Tøm hukommelsen
+    
+    const statusEl = document.getElementById('pdfUploadStatus');
+    if (statusEl) statusEl.innerText = "";
+    
+    if (typeof window.applyPdfUnderlay === 'function') {
+        window.applyPdfUnderlay(null);
     }
 };
 
@@ -150,19 +174,6 @@ window.startPdfCalibration = () => {
     diagramSettings.pdfConfig.isSettingOrigin = false;
     alert("KALIBRERING:\nKlik på det FØRSTE punkt på tegningen.");
     window.updatePdfSettings(); // Opdaterer UI
-};
-
-window.removePdfUnderlay = () => {
-    const fileInput = document.getElementById('pdfFileInput');
-    if (fileInput) fileInput.value = '';
-    diagramSettings.pdfConfig.active = false;
-    const statusEl = document.getElementById('pdfUploadStatus');
-    if (statusEl) statusEl.innerText = "";
-    
-    // Brug vores funktion fra tidligere til at fjerne planet
-    if (typeof window.applyPdfUnderlay === 'function') {
-        window.applyPdfUnderlay(null);
-    }
 };
 
 window.toggleAllLabels = (checkbox) => {
@@ -695,7 +706,7 @@ export function renderDiagram(keepControls = false) {
             if (dx > 5 || dy > 5) isDragging = true;
         });
         
-// --- TRIN 8.8 - 8.10: Komplet Raycaster og HUD (Defensiv Vanilla JS) ---
+// --- Komplet Raycaster og HUD (Defensiv Vanilla JS) ---
         canvas.addEventListener('pointerup', (e) => {
             if (isDragging) return;
 
@@ -941,16 +952,22 @@ export function renderDiagram(keepControls = false) {
         renderer.setSize(webglContainer.clientWidth, webglContainer.clientHeight);
     }
 
-// ==========================================
+    // ==========================================
     // 1. RYDDER OP I SCENEN
     // ==========================================
     window.reset3DHighlight(); 
     for (let i = scene.children.length - 1; i >= 0; i--) {
         let obj = scene.children[i];
+        
+        // --- NYT: VIP-PAS TIL PDF'EN! ---
+        // Hvis objektet er vores PDF-tegning, springer bulldozeren det over!
+        if (obj.userData && obj.userData.isPdf) continue;
+
         if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "ArrowHelper" || obj.type === "GridHelper") {
             scene.remove(obj);
             if (obj.geometry) obj.geometry.dispose();
             if (obj.material) {
+                // Beskyt vores globale materialCache
                 if (!Object.values(materialCache).includes(obj.material)) {
                     if (obj.material.map && obj.material.map !== globalFlowTexture) obj.material.map.dispose();
                     if (obj.material.emissiveMap && obj.material.emissiveMap !== globalFlowTexture) obj.material.emissiveMap.dispose();
@@ -1952,6 +1969,10 @@ window.clear3DScene = () => {
     // 2. Støvsug scenen for fysiske objekter
     for (let i = scene.children.length - 1; i >= 0; i--) {
         let obj = scene.children[i];
+        
+        // --- NYT: VIP-PAS TIL PDF'EN! ---
+        if (obj.userData && obj.userData.isPdf) continue;
+
         if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "ArrowHelper") {
             scene.remove(obj);
             if (obj.geometry) obj.geometry.dispose();
@@ -1976,11 +1997,11 @@ window.clear3DScene = () => {
         renderer.render(scene, camera);
     }
     
-    console.log("[WebGL] Scenen er støvsuget og klar til nyt projekt.");
+    console.log("[WebGL] Scenen er støvsuget (PDF er bevaret).");
 };
 
 // ==========================================
-// TRIN 9.4: CAD VIEWPORTS (KAMERA KONTROL)
+// CAD VIEWPORTS (KAMERA KONTROL)
 // ==========================================
 window.setCameraView = function(view) {
     if (!camera || !controls || !scene) return;
@@ -2088,4 +2109,55 @@ window.applyPdfUnderlay = function(canvas) {
     pdfPlaneMesh.position.set(cfg.offsetX_mm / 10, elevation3D - 1, cfg.offsetZ_mm / 10); 
     scene.add(pdfPlaneMesh);
     if (renderer && camera) renderer.render(scene, camera);
+};
+
+// ==========================================
+// KAN KALDES FRA UI.JS FOR AT TAGE ET BILLEDE
+// ==========================================
+window.getDiagramSnapshot = () => {
+    if (typeof renderer !== 'undefined' && scene && camera) {
+        // Tving et render-frame, så vi ikke får et sort billede
+        renderer.render(scene, camera);
+        // Hent canvas som et PNG-billede
+        return renderer.domElement.toDataURL('image/png', 1.0);
+    }
+    return '';
+};
+
+// ==========================================
+// GEM OG HENT INDSTILLINGER (BRO TIL JSON)
+// ==========================================
+window.getDiagramSettings = () => {
+    return diagramSettings;
+};
+
+window.applyDiagramSettings = async (saved) => {
+    if (!saved) return;
+    
+    if (saved.grid) diagramSettings.grid = { ...diagramSettings.grid, ...saved.grid };
+    if (saved.pdfConfig) diagramSettings.pdfConfig = { ...diagramSettings.pdfConfig, ...saved.pdfConfig };
+    
+    const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    setVal('num_grid_spacing', diagramSettings.grid.spacingMm);
+    setVal('num_grid_elevation', diagramSettings.grid.elevationMm);
+    setVal('num_pdf_opacity', diagramSettings.pdfConfig.opacity);
+    setVal('sel_pdf_scale', diagramSettings.pdfConfig.scaleMode);
+    setVal('num_pdf_offset_x', Math.round(diagramSettings.pdfConfig.offsetX_mm));
+    setVal('num_pdf_offset_z', Math.round(diagramSettings.pdfConfig.offsetZ_mm));
+
+    // GENOPLIV PDF fra filens data
+    if (diagramSettings.pdfConfig.pdfData && diagramSettings.pdfConfig.active) {
+        try {
+            const res = await fetch(diagramSettings.pdfConfig.pdfData);
+            const blob = await res.blob();
+            const canvas = await renderPdfToCanvas(blob);
+            window.applyPdfUnderlay(canvas);
+        } catch (err) {
+            console.error("Kunne ikke gendanne PDF fra fil:", err);
+        }
+    } else {
+        window.applyPdfUnderlay(null);
+    }
+    
+    if (typeof window.renderDiagram === 'function') window.renderDiagram(true);
 };

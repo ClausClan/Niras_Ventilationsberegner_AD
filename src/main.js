@@ -11,7 +11,7 @@ import {
 } from './app_state.js';
 window.stateManager = stateManager;
 window.setCorrectionTargetId = setCorrectionTargetId;
-import { projectManager } from './projects.js';
+//import { projectManager } from './projects.js';
 import { toggleDiagramView, renderDiagram } from './diagram.js';
 import { initDesktopMode } from './desktop_ui.js';
 
@@ -304,28 +304,6 @@ window.clearSystem = (event) => {
         ui.renderSystem();
         ui.handleComponentTypeChange();
     });
-};
-
-window.saveSystem = (event) => {
-    if (event) event.preventDefault();
-    const systemComponents = getSystemComponents();
-    const data = {
-        projectName: document.getElementById('projectName').value,
-        startAirflow: document.getElementById('system_airflow').value,
-        systemType: document.querySelector('input[name="systemFlowType"]:checked').value,
-        components: systemComponents,
-        timestamp: new Date().toISOString()
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `ventilations_system_${data.projectName || 'unnamed'}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    ui.toggleSystemMenu();
 };
 
 window.triggerFileLoad = (event) => {
@@ -1864,60 +1842,12 @@ async function initializeApp() {
     const projectModal = document.getElementById('projectModal');
     const projectListContainer = document.getElementById('projectList');
 
-    const openProjectModal = (mode) => {
-        try {
-            renderProjectList();
-            projectModal.classList.remove('hidden');
-            window.toggleSystemMenu(); 
-        } catch (e) {
-            console.error('Error in openProjectModal:', e);
-        }
-    };
-
-    const saveProjectAs = () => {
-        window.toggleSystemMenu(); 
-        let currentName = document.getElementById('projectName').value;
-        const name = prompt("Indtast projektnavn:", currentName);
-        if (name) {
-            try {
-                if (projectManager.projectExists(name)) {
-                    showConfirm(`Projektet "${name}" findes allerede. Vil du overskrive det?`, () => {
-                        try {
-                            projectManager.updateProject(name);
-                            document.getElementById('projectName').value = name;
-                            renderProjectList();
-                            alert(`Projekt "${name}" gemt.`);
-                        } catch (err) {
-                            alert('Fejl: ' + err.message);
-                        }
-                    });
-                } else {
-                    projectManager.createProject(name);
-                    document.getElementById('projectName').value = name;
-                    renderProjectList();
-                    alert(`Projekt "${name}" gemt.`);
-                }
-            } catch (err) {
-                alert('Fejl: ' + err.message);
-            }
-        }
-    };
-
     document.getElementById('btnMenuNew').addEventListener('click', (e) => {
         e.stopPropagation();
         window.toggleSystemMenu(); 
         window.clearSystem();
     });
-    document.getElementById('btnMenuLoad').addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openProjectModal('load');
-    });
-    document.getElementById('btnMenuSaveAs').addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        saveProjectAs();
-    });
+
     document.getElementById('btnMenuSaveFile').addEventListener('click', (e) => {
         e.stopPropagation();
         window.saveSystem(e);
@@ -1937,65 +1867,7 @@ async function initializeApp() {
         }
     });
 
-    function renderProjectList() {
-        if (!projectListContainer) return;
-        const projects = projectManager.listProjects();
-        projectListContainer.innerHTML = '';
-
-        if (projects.length === 0) {
-            projectListContainer.innerHTML = '<p style="text-align: center; color: var(--text-muted-color);">Ingen gemte projekter.</p>';
-            return;
-        }
-
-        projects.forEach(proj => {
-            const el = document.createElement('div');
-            el.className = 'project-item';
-            const dateStr = new Date(proj.timestamp).toLocaleString('da-DK');
-            el.innerHTML = `
-                <div class="project-info">
-                    <h3>${proj.name}</h3>
-                    <p>Gemt: ${dateStr}</p>
-                </div>
-                <div class="project-actions">
-                    <button class="project-btn load" data-name="${proj.name}" title="Hent">📂</button>
-                    <button class="project-btn delete" data-name="${proj.name}" title="Slet">🗑️</button>
-                </div>
-            `;
-            projectListContainer.appendChild(el);
-        });
-
-        projectListContainer.querySelectorAll('.load').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation(); 
-                const name = e.currentTarget.dataset.name;
-                showConfirm(`Vil du hente projektet "${name}"? Nuværende ikke-gemte ændringer vil gå tabt.`, () => {
-                    try {
-                        projectManager.loadProject(name);
-                        projectModal.classList.add('hidden');
-                        ui.renderSystem();
-                        ui.handleComponentTypeChange();
-                        document.getElementById('projectName').value = name;
-                        alert(`Projekt "${name}" hentet.`);
-                    } catch (err) {
-                        alert('Fejl: ' + err.message);
-                    }
-                });
-            });
-        });
-
-        projectListContainer.querySelectorAll('.delete').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const name = e.currentTarget.dataset.name;
-                showConfirm(`Er du sikker på, at du vil slette projektet "${name}"?`, () => {
-                    projectManager.deleteProject(name);
-                    renderProjectList();
-                });
-            });
-        });
-    }
-
-document.getElementById('btnNewProject').addEventListener('click', (e) => {
+    document.getElementById('btnNewProject').addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
         showConfirm('Er du sikker på, at du vil starte et nyt projekt?', () => {
@@ -2005,12 +1877,6 @@ document.getElementById('btnNewProject').addEventListener('click', (e) => {
             // 2. Den ultimative, rene nulstilling (Fjerner WebGL Zombier og nulstiller alle mobil-faner)
             window.location.reload(); 
         });
-    });
-
-    document.getElementById('btnSaveProjectAs').addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        saveProjectAs();
     });
 
     ui.populateDatalists();
@@ -2060,10 +1926,11 @@ document.getElementById('btnNewProject').addEventListener('click', (e) => {
 
     ui.updateUndoRedoUI(canUndo(), canRedo());
 
-    // --- UDFORDRING 1: AUTO-LOAD (Mulighed B) ---
-    // Synkroniser UI felter med den netop indlæste state fra localStorage
+
+    // --- USYNLIG AUTO-SAVE (CRASH RECOVERY) ---
+    // Hvis siden opdateres ved en fejl, prøver vi at hente det midlertidige state
     const loadedState = stateManager.state;
-    if (loadedState) {
+    if (loadedState && Object.keys(loadedState).length > 0) {
         if (loadedState.projectName) document.getElementById('projectName').value = loadedState.projectName;
         if (loadedState.startAirflow) document.getElementById('system_airflow').value = loadedState.startAirflow;
         if (loadedState.temperature) document.getElementById('temperature').value = loadedState.temperature;
@@ -2071,10 +1938,13 @@ document.getElementById('btnNewProject').addEventListener('click', (e) => {
             const radio = document.querySelector(`input[name="systemFlowType"][value="${loadedState.systemType}"]`);
             if (radio) radio.checked = true;
         }
+        
+        // Gendan 3D visningsindstillinger med en kort forsinkelse, så motoren er startet
+        if (loadedState.diagramSettings && typeof window.applyDiagramSettings === 'function') {
+            setTimeout(() => window.applyDiagramSettings(loadedState.diagramSettings), 200);
+        }
     }
-
-    // Sørger for at UI'et afspejler data hentet fra localStorage med det samme
-    ui.renderFittingsResult();
+    
     if (window.recalculateSystem) window.recalculateSystem();
 
     // --- UDFORDRING 2: BESKYTTELSE MOD TAB AF DATA ---
@@ -2090,17 +1960,26 @@ document.getElementById('btnNewProject').addEventListener('click', (e) => {
     });
 }
 
+// ==========================================
+// FIL-HÅNDTERING (.JSON)
+// ==========================================
+
 window.loadSystem = (event) => {
     const file = event.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
         try {
             const data = JSON.parse(e.target.result);
             document.getElementById('projectName').value = data.projectName || '';
 
             if (data.state) {
                 stateManager.importState(data.state);
+                
+                // --- NYT: SUGER 3D INDSTILLINGER OG PDF IND! ---
+                if (data.state.diagramSettings && typeof window.applyDiagramSettings === 'function') {
+                    await window.applyDiagramSettings(data.state.diagramSettings);
+                }
             } else {
                 const legacyState = {
                     systemComponents: data.components || [],
@@ -2116,6 +1995,9 @@ window.loadSystem = (event) => {
 
             if (window.recalculateSystem) window.recalculateSystem();
             ui.toggleSystemMenu();
+            
+            // Tillad indlæsning af samme fil igen
+            event.target.value = '';
         } catch (error) {
             alert('Fejl ved indlæsning af fil: ' + error.message);
         }
@@ -2123,22 +2005,20 @@ window.loadSystem = (event) => {
     reader.readAsText(file);
 };
 
-window.triggerFileLoad = () => {
-    window.toggleSystemMenu(); 
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = window.loadSystem;
-    input.click();
-};
-
 window.saveSystem = () => {
     window.toggleSystemMenu(); 
+    
+    // --- NYT: HENTER PDF OG 3D SETTINGS INDEN GEM! ---
+    if (typeof window.getDiagramSettings === 'function') {
+        stateManager.state.diagramSettings = window.getDiagramSettings();
+    }
+    
     const projectName = document.getElementById('projectName').value || 'ventilation_projekt';
     const dataToSave = {
         projectName: projectName,
         state: stateManager.state 
     };
+    
     const blob = new Blob([JSON.stringify(dataToSave, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2146,6 +2026,23 @@ window.saveSystem = () => {
     a.download = `${projectName}_data.json`;
     a.click();
     URL.revokeObjectURL(url);
+};
+
+// Hjælpefunktion til UI-knappen
+window.triggerFileLoad = () => {
+    window.toggleSystemMenu(); 
+    // Hvis du ikke allerede har et <input type="file" id="sysFileLoader" ...> i din HTML, laver vi det dynamisk:
+    let fileInput = document.getElementById('sysFileLoader');
+    if (!fileInput) {
+        fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.id = 'sysFileLoader';
+        fileInput.accept = '.json';
+        fileInput.style.display = 'none';
+        fileInput.addEventListener('change', window.loadSystem);
+        document.body.appendChild(fileInput);
+    }
+    fileInput.click();
 };
 
 /**
