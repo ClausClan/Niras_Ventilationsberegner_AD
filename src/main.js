@@ -149,6 +149,9 @@ window.deleteFitting = (id) => {
     ui.renderFittingsResult();
 };
 
+
+
+
 // --- Toggle mellem Top-Down og Bottom-Up ---
 window.toggleCalculationMode = (mode) => {
     if (window.stateManager) {
@@ -2199,6 +2202,89 @@ if (flowTypeRadios.length > 0) {
         radio.disabled = shouldLock;
     });
 }
+});
+
+// ==========================================
+// TASTATURGENVEJE CTRL v,c,DEL,ESC
+// ==========================================
+
+window.selectedComponentId = null;
+window.selectedComponentPort = null;
+
+// 1. Fang markeringer fra 3D-modellen
+const originalHighlight3D = window.highlight3DComponent;
+window.highlight3DComponent = function(id, port) {
+    // KØR 3D-MOTORENS LOGIK FØRST (som inkluderer reset)
+    if (originalHighlight3D) originalHighlight3D(id, port);
+    
+    // GEM ID'ET BAGEFTER, så det ikke bliver overskrevet!
+    window.selectedComponentId = id;
+    window.selectedComponentPort = port || null;
+};
+
+// 2. Fang markeringer fra 2D Tabellen
+const originalHighlightTableRow = window.highlightTableRow;
+window.highlightTableRow = function(id, port) {
+    if (originalHighlightTableRow) originalHighlightTableRow(id, port);
+    window.selectedComponentId = id;
+    window.selectedComponentPort = port || null;
+};
+
+// 3. Fang nulstilling (når man klikker i tomrummet eller trykker Esc)
+const originalReset3D = window.reset3DHighlight;
+window.reset3DHighlight = function() {
+    window.selectedComponentId = null;
+    window.selectedComponentPort = null;
+    if (originalReset3D) originalReset3D();
+};
+
+document.addEventListener('keydown', (e) => {
+    const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+    if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') return;
+
+    const isCtrl = e.ctrlKey || e.metaKey;
+    const selId = window.selectedComponentId;
+
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        if (typeof window.reset3DHighlight === 'function') window.reset3DHighlight();
+        const hud = document.getElementById('hudContextMenu');
+        if (hud) hud.remove();
+        document.querySelectorAll('.highlighted-row').forEach(row => row.classList.remove('highlighted-row'));
+        window.selectedComponentId = null;
+        window.selectedComponentPort = null;
+    }
+    else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selId) {
+            e.preventDefault();
+            if (typeof window.handleDeleteComponent === 'function') {
+                window.handleDeleteComponent(selId);
+                window.selectedComponentId = null;
+                window.selectedComponentPort = null;
+            }
+        }
+    }
+    else if (isCtrl && e.key.toLowerCase() === 'c') {
+        if (selId) {
+            e.preventDefault();
+            if (typeof window.handleCopyBranch === 'function') window.handleCopyBranch(selId);
+        }
+    }
+    else if (isCtrl && e.key.toLowerCase() === 'v') {
+        if (selId && window.clipboardBranch) {
+            e.preventDefault();
+            const comp = window.stateManager ? window.stateManager.getSystemComponent(selId) : null;
+            
+            // BRUGER PORTEN FRA KLIKKET, ellers falder den tilbage til et kvalificeret gæt
+            let targetPort = window.selectedComponentPort || 'outlet';
+            
+            if (!window.selectedComponentPort && comp && comp.type.startsWith('tee_')) {
+                 targetPort = comp.type === 'tee_bullhead' ? 'outlet_path1' : 'outlet_straight'; 
+            }
+            
+            if (typeof window.handlePasteBranch === 'function') window.handlePasteBranch(selId, targetPort);
+        }
+    }
 });
 
 document.addEventListener('DOMContentLoaded', initializeApp);

@@ -153,7 +153,8 @@ let axesScene, axesCamera, axesRenderer;
 let labelX, labelY, labelZ;
 
 // --- VISUEL FOKUS MODE (HOVER LOGIK) ---
-window.highlight3DComponent = (id) => {
+// --- VISUEL FOKUS MODE (HOVER & PORT LOGIK) ---
+window.highlight3DComponent = (id, port) => {
     if (!scene) return;
     window.reset3DHighlight(); 
     scene.traverse((child) => {
@@ -162,9 +163,18 @@ window.highlight3DComponent = (id) => {
             child.material = child.material.clone(); 
 
             if (String(child.userData.compId) === String(id)) {
-                child.material.emissive.setHex(0x39FF14); 
-                child.material.emissiveIntensity = 0.6;
-                child.material.transparent = false;
+                // Tjek om vi leder efter en specifik port (f.eks. på et T-stykke)
+                if (port && child.userData.port && child.userData.port !== port) {
+                    // Rigtig komponent, men FORKERT afgrening. Gør den mørkegrøn.
+                    child.material.emissive.setHex(0x114411); 
+                    child.material.emissiveIntensity = 0.5;
+                    child.material.transparent = false;
+                } else {
+                    // Den helt korrekte port (eller hele komponenten hvis port ikke er valgt)
+                    child.material.emissive.setHex(0x39FF14); // Neon grøn!
+                    child.material.emissiveIntensity = 0.8;
+                    child.material.transparent = false;
+                }
                 child.material.wireframe = false;
                 child.material.opacity = 1.0;
             } else {
@@ -292,8 +302,22 @@ export function renderDiagram(keepControls = false) {
         container.innerHTML = `
             <div id="diagramOverlayControls" class="diagram-overlay-container" style="position:absolute; top:10px; right:10px; z-index:100; background:rgba(0,0,0,0.8); padding:10px; border-radius:8px; border:1px solid var(--border-color); color:white; width:33%; max-width:200px; box-sizing: border-box;">
                  
-                 <button class="button secondary" style="width:100%; margin-bottom:12px; padding:6px; font-size:0.85rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.zoomAllDiagram()" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'"><i class="fas fa-expand"></i> Zoom Alt</button>
-                 
+                <!-- Zoom ALL - knap deaktiveret -->
+                 <!--  <button class="button secondary" style="width:100%; margin-bottom:12px; padding:6px; font-size:0.85rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.zoomAllDiagram()" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'"><i class="fas fa-expand"></i> Zoom Alt</button> -->
+                
+                 <!-- Kamara Viewports -->
+                 <div style="font-size: 0.75rem; font-weight: bold; margin-bottom: 6px; color: var(--text-muted-color); text-transform: uppercase; text-align: left;">Kamera (Viewports):</div>
+                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-bottom: 12px;">
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.setCameraView('top')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Top</button>
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.setCameraView('bottom')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Bottom</button>
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.setCameraView('front')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Front</button>
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.setCameraView('back')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Back</button>
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.setCameraView('left')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Left</button>
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.setCameraView('right')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Right</button>
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; grid-column: span 3; transition: all 0.2s;" onclick="window.setCameraView('iso')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Isometrisk (3D)</button>
+                 </div>
+
+
                  <div style="font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; color: var(--text-muted-color); text-transform: uppercase; text-align: left;">Visualisering:</div>
                  <select id="diagramColorMode" class="input-field" style="width:100%;font-size:0.8rem; padding:4px; margin-bottom: 12px; background: rgba(0,0,0,0.5); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; cursor: pointer;" onchange="window.updateDiagramSettings()">
                     <option value="default" style="background: #111; color: white;" ${diagramSettings.colorMode === 'default' ? 'selected' : ''}>Standard</option>
@@ -529,15 +553,17 @@ export function renderDiagram(keepControls = false) {
                 
                 if (obj.userData && obj.userData.compId != null) {
                     const compId = String(obj.userData.compId);
+                    const clickedPort = obj.userData.port; // NYT: Vi gemmer hvilken specifik sub-mesh (port) der blev ramt
                     
                     if (e.button === 0) {
-                        if (window.highlightTableRow) window.highlightTableRow(compId); 
+                        if (window.highlightTableRow) window.highlightTableRow(compId, clickedPort); 
+                        if (window.highlight3DComponent) window.highlight3DComponent(compId, clickedPort); // Tvinger venstreklik til at vise den valgte gren
                     } else if (e.button === 2 && document.body.classList.contains('desktop-mode')) {
-                        if (window.highlightTableRow) window.highlightTableRow(compId);
-                        if (window.highlight3DComponent) window.highlight3DComponent(compId);
+                        if (window.highlightTableRow) window.highlightTableRow(compId, clickedPort);
+                        if (window.highlight3DComponent) window.highlight3DComponent(compId, clickedPort);
 
                         let hudMenu = document.getElementById('hudContextMenu');
-                        if (hudMenu) hudMenu.remove(); 
+                        if (hudMenu) hudMenu.remove();
 
                         hudMenu = document.createElement('div');
                         hudMenu.id = 'hudContextMenu';
@@ -570,7 +596,6 @@ export function renderDiagram(keepControls = false) {
                         const hasClipboard = window.clipboardBranch !== undefined && window.clipboardBranch !== null;
                         const pasteOpacity = hasClipboard ? '1' : '0.4';
                         const pastePointer = hasClipboard ? 'auto' : 'none';
-                        const clickedPort = obj.userData.port;
 
                         let addButtonsHtml = '';
                         let pasteButtonsHtml = '';
@@ -1738,4 +1763,68 @@ window.clear3DScene = () => {
     }
     
     console.log("[WebGL] Scenen er støvsuget og klar til nyt projekt.");
+};
+
+// ==========================================
+// TRIN 9.4: CAD VIEWPORTS (KAMERA KONTROL)
+// ==========================================
+window.setCameraView = function(view) {
+    if (!camera || !controls || !scene) return;
+
+    // Find systemets bounding box (så vi ved, hvor stort det er, og hvor midten er)
+    const box = new THREE.Box3();
+    scene.traverse((child) => {
+        if (child.isMesh && child.userData && child.userData.compId != null) {
+            box.expandByObject(child);
+        }
+    });
+
+    if (box.isEmpty()) return;
+
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    
+    // Find den største dimension for at regne afstanden ud
+    const maxDim = Math.max(size.x, size.y, size.z, 500);
+    
+    // Brug trigonometri til at placere kameraet præcist, så alt er i billedet (FOV)
+    const fovY = camera.fov * (Math.PI / 180);
+    const dist = (maxDim / 2) / Math.tan(fovY / 2) * 1.5; 
+
+    controls.target.copy(center);
+
+    // Standard "Op" retning for kameraet
+    camera.up.set(0, 1, 0);
+
+    // Snap kameraet til de rigtige akser
+    switch(view) {
+        case 'top': 
+            camera.position.set(center.x, center.y + dist, center.z); 
+            // Fix Gimbal Lock: Når vi kigger direkte ned, skal toppen af skærmen pege mod -Z
+            camera.up.set(0, 0, -1); 
+            break;
+        case 'bottom': 
+            camera.position.set(center.x, center.y - dist, center.z); 
+            camera.up.set(0, 0, 1); 
+            break;
+        case 'front': 
+            camera.position.set(center.x, center.y, center.z + dist); 
+            break;
+        case 'back': 
+            camera.position.set(center.x, center.y, center.z - dist); 
+            break;
+        case 'left': 
+            camera.position.set(center.x - dist, center.y, center.z); 
+            break;
+        case 'right': 
+            camera.position.set(center.x + dist, center.y, center.z); 
+            break;
+        case 'iso': 
+            // Klassisk Isometrisk vinkel (skråt oppefra)
+            camera.position.set(center.x + dist*0.8, center.y + dist*0.8, center.z + dist*0.8); 
+            break;
+    }
+
+    camera.lookAt(center);
+    controls.update();
 };
