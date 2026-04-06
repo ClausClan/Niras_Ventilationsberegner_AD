@@ -1,6 +1,7 @@
 import { getSystemComponents } from './app_state.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { renderPdfToCanvas } from './pdf_manager.js';
 
 let diagramSettings = {
     colorMode: 'default',
@@ -17,7 +18,20 @@ let diagramSettings = {
     },
     animateFlow: false,          
     showInsulation: false,       
-    threshold: 0
+    threshold: 0,
+    // PDF indstillingerne
+    pdfSettingsExpanded: false,
+    pdfConfig: {
+        active: false,
+        opacity: 0.6,
+        scaleMode: '100', // F.eks. '50' for 1:50, '100' for 1:100, eller 'custom'
+        customScale: 100, // Den præcise målestoksfaktor
+        offsetX_mm: 0,
+        offsetZ_mm: 0,
+        isSettingOrigin: false,
+        calibrationState: 0, // 0 = inaktiv, 1 = venter på punkt 1, 2 = venter på punkt 2
+        calibPt1: null
+    }
 };
 
 // Global flow tekstur til animationsloopet
@@ -55,6 +69,100 @@ window.updateDiagramSettings = () => {
     if (lblAll) lblAll.checked = allChecked;
 
     renderDiagram(true);
+};
+
+// ==========================================
+// PDF UI HANDLERS & KALIBRERING
+// ==========================================
+window.togglePdfSettings = () => {
+    diagramSettings.pdfSettingsExpanded = !diagramSettings.pdfSettingsExpanded;
+    const content = document.getElementById('pdfSettingsContent');
+    const icon = document.getElementById('pdfSettingsIcon');
+    if (content && icon) {
+        content.style.display = diagramSettings.pdfSettingsExpanded ? 'block' : 'none';
+        icon.innerText = diagramSettings.pdfSettingsExpanded ? '▼' : '▶';
+    }
+};
+
+window.handlePdfUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const statusEl = document.getElementById('pdfUploadStatus');
+    if (statusEl) statusEl.innerText = "Tykt tygger på PDF... Vent venligst.";
+
+    try {
+        const canvas = await renderPdfToCanvas(file);
+        diagramSettings.pdfConfig.active = true;
+        window.applyPdfUnderlay(canvas);
+        if (statusEl) statusEl.innerText = "PDF Indlæst & Klar!";
+    } catch (err) {
+        console.error(err);
+        if (statusEl) statusEl.innerHTML = "<span style='color:var(--error-color)'>Fejl ved indlæsning. Er det en valid PDF?</span>";
+    }
+};
+
+window.updatePdfSettings = () => {
+    const cfg = diagramSettings.pdfConfig;
+    const opacityEl = document.getElementById('num_pdf_opacity');
+    const scaleEl = document.getElementById('sel_pdf_scale');
+    const offsetXEl = document.getElementById('num_pdf_offset_x');
+    const offsetZEl = document.getElementById('num_pdf_offset_z');
+
+    if (opacityEl) cfg.opacity = parseFloat(opacityEl.value);
+    if (scaleEl) cfg.scaleMode = scaleEl.value;
+    if (offsetXEl) cfg.offsetX_mm = parseFloat(offsetXEl.value);
+    if (offsetZEl) cfg.offsetZ_mm = parseFloat(offsetZEl.value);
+
+    // Skjul/vis kalibreringsknappen baseret på dropdown
+    const calibBtn = document.getElementById('btn_pdf_calibrate');
+    if (calibBtn) calibBtn.style.display = cfg.scaleMode === 'custom' ? 'block' : 'none';
+
+    if (pdfPlaneMesh && pdfTextureCanvas) {
+        pdfPlaneMesh.material.opacity = cfg.opacity;
+        
+        // Genberegn dimensioner baseret på valgt målestok
+        let activeScale = cfg.scaleMode === 'custom' ? cfg.customScale : parseFloat(cfg.scaleMode);
+        let width3D = pdfTextureCanvas.width * PDF_TO_3D_FACTOR * activeScale;
+        let height3D = pdfTextureCanvas.height * PDF_TO_3D_FACTOR * activeScale;
+
+        pdfPlaneMesh.geometry.dispose();
+        pdfPlaneMesh.geometry = new THREE.PlaneGeometry(width3D, height3D);
+        
+        const elevation3D = (diagramSettings.grid.elevationMm / 1000) * 100; 
+        // Divider med 10, da 1 3D enhed = 10 mm
+        pdfPlaneMesh.position.set(cfg.offsetX_mm / 10, elevation3D - 1, cfg.offsetZ_mm / 10);
+        
+        if (renderer && camera) renderer.render(scene, camera);
+    }
+};
+
+// UI Triggers til CAD-Værktøjerne
+window.startPdfOriginPlacement = () => {
+    diagramSettings.pdfConfig.isSettingOrigin = true;
+    diagramSettings.pdfConfig.calibrationState = 0;
+    alert("Klik et sted på plantegningen for at gøre det til dit (0,0) startpunkt for rørene.");
+};
+
+window.startPdfCalibration = () => {
+    diagramSettings.pdfConfig.scaleMode = 'custom';
+    diagramSettings.pdfConfig.calibrationState = 1;
+    diagramSettings.pdfConfig.isSettingOrigin = false;
+    alert("KALIBRERING:\nKlik på det FØRSTE punkt på tegningen.");
+    window.updatePdfSettings(); // Opdaterer UI
+};
+
+window.removePdfUnderlay = () => {
+    const fileInput = document.getElementById('pdfFileInput');
+    if (fileInput) fileInput.value = '';
+    diagramSettings.pdfConfig.active = false;
+    const statusEl = document.getElementById('pdfUploadStatus');
+    if (statusEl) statusEl.innerText = "";
+    
+    // Brug vores funktion fra tidligere til at fjerne planet
+    if (typeof window.applyPdfUnderlay === 'function') {
+        window.applyPdfUnderlay(null);
+    }
 };
 
 window.toggleAllLabels = (checkbox) => {
@@ -151,6 +259,9 @@ let currentlyHighlightedMeshes = [];
 
 let axesScene, axesCamera, axesRenderer;
 let labelX, labelY, labelZ;
+
+let pdfPlaneMesh = null; // Holder styr på 3D-planet med arkitekttegningen
+let pdfTextureCanvas = null; // Gemmer PDF-billedet lokalt
 
 // --- VISUEL FOKUS MODE (HOVER LOGIK) ---
 // --- VISUEL FOKUS MODE (HOVER & PORT LOGIK) ---
@@ -400,6 +511,56 @@ export function renderDiagram(keepControls = false) {
                              <input type="number" id="num_grid_elevation" class="input-field" step="100" style="width: 100%; font-size: 0.75rem; padding: 2px 4px; background: #222; color: white; border: 1px solid #444;" value="${diagramSettings.grid.elevationMm}" onchange="window.updateDiagramSettings()">
                          </div>
                      </div>
+                     
+                 </div>
+                 <div>
+                     <div style="font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; color: var(--text-muted-color); text-transform: uppercase; cursor: pointer; display: flex; justify-content: space-between; align-items: center; padding: 2px 0; text-align: left;" onclick="window.togglePdfSettings()">
+                        <span>Baggrundstegning (PDF)</span>
+                        <span id="pdfSettingsIcon">${diagramSettings.pdfSettingsExpanded ? '▼' : '▶'}</span>
+                     </div>
+                     
+                     <div id="pdfSettingsContent" style="background: rgba(0,0,0,0.4); padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); display: ${diagramSettings.pdfSettingsExpanded ? 'block' : 'none'};">
+                         
+                         <input type="file" id="pdfFileInput" accept="application/pdf" style="display:none;" onchange="window.handlePdfUpload(event)">
+                         <button class="button primary" style="width: 100%; padding: 4px; font-size: 0.75rem; margin-bottom: 4px; border: 1px solid var(--primary-color);" onclick="document.getElementById('pdfFileInput').click()"><i class="fas fa-file-pdf"></i> Upload Plantegning</button>
+                         <div id="pdfUploadStatus" style="font-size: 0.65rem; color: #00E4FF; text-align: center; margin-bottom: 6px; font-style: italic;"></div>
+
+                         <div style="margin-bottom: 6px;">
+                             <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 2px;">Gennemsigtighed (0-1)</label>
+                             <input type="number" id="num_pdf_opacity" class="input-field" step="0.1" min="0" max="1" style="width: 100%; font-size: 0.75rem; padding: 2px 4px; background: #222; color: white; border: 1px solid #444;" value="${diagramSettings.pdfConfig.opacity}" onchange="window.updatePdfSettings()">
+                         </div>
+                         
+                         <div style="margin-bottom: 6px;">
+                             <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 2px;">Målestok (Skalering)</label>
+                             <select id="sel_pdf_scale" class="input-field" style="width: 100%; font-size: 0.75rem; padding: 2px 4px; background: #222; color: white; border: 1px solid #444; margin-bottom: 4px;" onchange="window.updatePdfSettings()">
+                                 <option value="5" ${diagramSettings.pdfConfig.scaleMode === '5' ? 'selected' : ''}>1:5</option>
+                                 <option value="10" ${diagramSettings.pdfConfig.scaleMode === '10' ? 'selected' : ''}>1:10</option>
+                                 <option value="20" ${diagramSettings.pdfConfig.scaleMode === '20' ? 'selected' : ''}>1:20</option>
+                                 <option value="50" ${diagramSettings.pdfConfig.scaleMode === '50' ? 'selected' : ''}>1:50</option>
+                                 <option value="100" ${diagramSettings.pdfConfig.scaleMode === '100' ? 'selected' : ''}>1:100</option>
+                                 <option value="200" ${diagramSettings.pdfConfig.scaleMode === '200' ? 'selected' : ''}>1:200</option>
+                                 <option value="250" ${diagramSettings.pdfConfig.scaleMode === '250' ? 'selected' : ''}>1:250</option>
+                                 <option value="300" ${diagramSettings.pdfConfig.scaleMode === '300' ? 'selected' : ''}>1:300</option>
+                                 <option value="500" ${diagramSettings.pdfConfig.scaleMode === '500' ? 'selected' : ''}>1:500</option>
+                                 <option value="custom" ${diagramSettings.pdfConfig.scaleMode === 'custom' ? 'selected' : ''}>Ukendt (Kalibrer)</option>
+                             </select>
+                             <button id="btn_pdf_calibrate" class="button secondary" style="width: 100%; padding: 4px; font-size: 0.7rem; color: white; border: 1px dashed #00A4E0; background: rgba(0, 164, 224, 0.1); display: ${diagramSettings.pdfConfig.scaleMode === 'custom' ? 'block' : 'none'};" onclick="window.startPdfCalibration()"><i class="fas fa-ruler-combined"></i> Kalibrer 2 punkter</button>
+                         </div>
+
+                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 4px;">
+                             <div>
+                                 <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 2px;">X Forskyd (mm)</label>
+                                 <input type="number" id="num_pdf_offset_x" class="input-field" step="100" style="width: 100%; font-size: 0.75rem; padding: 2px 4px; background: #222; color: white; border: 1px solid #444;" value="${Math.round(diagramSettings.pdfConfig.offsetX_mm)}" onchange="window.updatePdfSettings()">
+                             </div>
+                             <div>
+                                 <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 2px;">Z Forskyd (mm)</label>
+                                 <input type="number" id="num_pdf_offset_z" class="input-field" step="100" style="width: 100%; font-size: 0.75rem; padding: 2px 4px; background: #222; color: white; border: 1px solid #444;" value="${Math.round(diagramSettings.pdfConfig.offsetZ_mm)}" onchange="window.updatePdfSettings()">
+                             </div>
+                         </div>
+                         <button class="button secondary" style="width: 100%; padding: 4px; font-size: 0.75rem; margin-bottom: 8px; color: white; border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.1);" onclick="window.startPdfOriginPlacement()"><i class="fas fa-crosshairs"></i> Sæt Origo (Klik på kort)</button>
+                         
+                         <button class="button secondary" style="width: 100%; padding: 4px; font-size: 0.75rem; color: #ff4444; border: 1px solid rgba(255,68,68,0.3); background: transparent;" onclick="window.removePdfUnderlay()"><i class="fas fa-trash"></i> Fjern Tegning</button>
+                     </div>
                  </div>
             </div>
             <div id="diagramAxesContainer" style="position:absolute; bottom:20px; right:20px; width:80px; height:80px; z-index:90; pointer-events:none; display:none;"></div>
@@ -547,6 +708,59 @@ export function renderDiagram(keepControls = false) {
             raycaster.setFromCamera(mouse, camera);
 
             const intersects = raycaster.intersectObjects(scene.children, true);
+
+            // --- CAD VÆRKTØJER TIL PDF TEGNING ---
+            const cfg = diagramSettings.pdfConfig;
+            if (cfg.isSettingOrigin || cfg.calibrationState > 0) {
+                const hit = intersects.find(i => i.object.userData.isPdf);
+                if (hit && e.button === 0) {
+                    if (cfg.isSettingOrigin) {
+                        // Flyt PDF'en baglæns, så det klikkede punkt lander på (0,0)
+                        cfg.offsetX_mm -= (hit.point.x * 10);
+                        cfg.offsetZ_mm -= (hit.point.z * 10);
+                        cfg.isSettingOrigin = false;
+                        
+                        // Opdater UI-felterne direkte
+                        const elX = document.getElementById('num_pdf_offset_x');
+                        const elZ = document.getElementById('num_pdf_offset_z');
+                        if (elX) elX.value = Math.round(cfg.offsetX_mm);
+                        if (elZ) elZ.value = Math.round(cfg.offsetZ_mm);
+                        
+                        window.updatePdfSettings();
+                        return; // Stop andet klik-logik
+                    }
+                    
+                    if (cfg.calibrationState === 1) {
+                        cfg.calibPt1 = hit.point.clone();
+                        cfg.calibrationState = 2;
+                        alert("Punkt 1 gemt! Klik nu på det ANDET punkt.");
+                        return;
+                    }
+                    
+                    if (cfg.calibrationState === 2) {
+                        const pt2 = hit.point.clone();
+                        const dist3D = cfg.calibPt1.distanceTo(pt2);
+                        
+                        setTimeout(() => {
+                            const mmStr = prompt("Hvor mange millimeter (mm) er afstanden mellem de to punkter i virkeligheden?");
+                            if (mmStr) {
+                                const realMm = parseFloat(mmStr);
+                                if (!isNaN(realMm) && realMm > 0) {
+                                    const requestedDist3D = realMm / 10;
+                                    const scaleAdjustmentRatio = requestedDist3D / dist3D;
+                                    
+                                    // Ganger den eksisterende CustomScale op med det manglende forhold
+                                    cfg.customScale = cfg.customScale * scaleAdjustmentRatio;
+                                    window.updatePdfSettings();
+                                    alert("Tegningen er nu kalibreret!");
+                                }
+                            }
+                        }, 100);
+                        cfg.calibrationState = 0;
+                        return;
+                    }
+                }
+            }
 
             for (let i = 0; i < intersects.length; i++) {
                 const obj = intersects[i].object;
@@ -1827,4 +2041,51 @@ window.setCameraView = function(view) {
 
     camera.lookAt(center);
     controls.update();
+};
+
+// ==========================================
+// KLISTER PDF PLANTEGNING I 3D
+// ==========================================
+
+// Den magiske formel der omregner PDF pixels (ved scale 3.0 og 72 DPI) til vores 3D rum
+const PDF_TO_3D_FACTOR = (1/3) * (25.4/72) * 0.1;
+
+window.applyPdfUnderlay = function(canvas) {
+    if (!scene) return;
+    if (pdfPlaneMesh) {
+        scene.remove(pdfPlaneMesh);
+        if (pdfPlaneMesh.material.map) pdfPlaneMesh.material.map.dispose();
+        pdfPlaneMesh.material.dispose();
+        pdfPlaneMesh.geometry.dispose();
+        pdfPlaneMesh = null;
+    }
+    if (!canvas) {
+        pdfTextureCanvas = null;
+        if (renderer && camera) renderer.render(scene, camera);
+        return;
+    }
+    pdfTextureCanvas = canvas;
+    const cfg = diagramSettings.pdfConfig;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.anisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 16;
+    texture.colorSpace = THREE.SRGBColorSpace;
+
+    const material = new THREE.MeshBasicMaterial({ 
+        map: texture, transparent: true, opacity: cfg.opacity, side: THREE.DoubleSide, depthWrite: false 
+    });
+
+    // Start ud med den aktuelle scale (standard 1:100)
+    let activeScale = cfg.scaleMode === 'custom' ? cfg.customScale : parseFloat(cfg.scaleMode);
+    let width3D = canvas.width * PDF_TO_3D_FACTOR * activeScale;
+    let height3D = canvas.height * PDF_TO_3D_FACTOR * activeScale;
+
+    const planeGeo = new THREE.PlaneGeometry(width3D, height3D);
+    pdfPlaneMesh = new THREE.Mesh(planeGeo, material);
+    pdfPlaneMesh.userData = { isPdf: true }; // VIGTIGT: Gør den klikbar for vores værktøjer
+    pdfPlaneMesh.rotation.x = -Math.PI / 2;
+    
+    const elevation3D = (diagramSettings.grid.elevationMm / 1000) * 100; 
+    pdfPlaneMesh.position.set(cfg.offsetX_mm / 10, elevation3D - 1, cfg.offsetZ_mm / 10); 
+    scene.add(pdfPlaneMesh);
+    if (renderer && camera) renderer.render(scene, camera);
 };

@@ -230,7 +230,7 @@ addSystemComponent(comp, parentId = null, parentPort = 'outlet', targetPort = 'i
         graph.nodes[comp.id] = comp;
 
         if (parentId && graph.nodes[parentId]) {
-            // --- TRIN 8.9: "Tilføj Mellem" Logik (Edge Interception) ---
+            // "Tilføj Mellem" Logik (Edge Interception) ---
             // Tjek om der allerede findes en udgående forbindelse fra den valgte port
             const existingEdgeIndex = graph.edges.findIndex(e => e.from === parentId && e.fromPort === parentPort);
             
@@ -341,7 +341,7 @@ addSystemComponent(comp, parentId = null, parentPort = 'outlet', targetPort = 'i
         console.log(`[Graf-Motor] Kanal splittet succesfuldt i ${parts} dele.`);
     }
 
-    // --- Kopiér Gren (Deep Copy) ---
+    // --- Kopiér Gren ---
     copyBranch(startId) {
         const graph = this.getGraph();
         if (!graph.nodes[startId]) {
