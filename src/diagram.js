@@ -1324,6 +1324,9 @@ export function renderDiagram(keepControls = false) {
             const angleDeg = comp.properties?.angle || 90;
             const turnRad = THREE.MathUtils.degToRad(angleDeg);
 
+            // =========================================================
+            // THE UNIVERSAL ROTATION CORE (Virker på alle komponenter!)
+            // =========================================================
             const orientation = comp.properties?.orientation || 'Left';
             const rightDir = currentDir.clone().cross(nextUp).normalize();
             let axis = nextUp.clone();
@@ -1333,6 +1336,16 @@ export function renderDiagram(keepControls = false) {
             else if (orientation === 'Right') { axis = nextUp.clone(); turnSign = -1; }
             else if (orientation === 'Up') { axis = rightDir.clone(); turnSign = 1; }
             else if (orientation === 'Down') { axis = rightDir.clone(); turnSign = -1; }
+            else if (orientation === 'Custom' || orientation === 'Andet') {
+                // Frie Grader: Vi drejer "Op" vektoren som en tønde rundt om røret
+                const customAngleRad = THREE.MathUtils.degToRad(parseFloat(comp.properties?.orientationAngle || 0));
+                const turnTowards = nextUp.clone().applyAxisAngle(currentDir, customAngleRad).normalize();
+                
+                // Beregn den perfekte omdrejningsakse med et krydsprodukt
+                axis = currentDir.clone().cross(turnTowards).normalize();
+                turnSign = -1;
+            }
+            // =========================================================
 
             nextDir.applyAxisAngle(axis, turnRad * turnSign).normalize();
             nextUp.applyAxisAngle(axis, turnRad * turnSign).normalize();
@@ -1445,6 +1458,9 @@ export function renderDiagram(keepControls = false) {
 else if (pType.includes('tee')) {
             const isBullhead = pType === 'tee_bullhead';
             
+            // =========================================================
+            // THE UNIVERSAL ROTATION CORE
+            // =========================================================
             const orientation = comp.properties?.orientation || 'Left';
             const rightDir = currentDir.clone().cross(nextUp).normalize();
             let axis = nextUp.clone();
@@ -1454,6 +1470,13 @@ else if (pType.includes('tee')) {
             else if (orientation === 'Right') { axis = nextUp.clone(); turnSign = -1; }
             else if (orientation === 'Up') { axis = rightDir.clone(); turnSign = 1; }
             else if (orientation === 'Down') { axis = rightDir.clone(); turnSign = -1; }
+            else if (orientation === 'Custom' || orientation === 'Andet') {
+                const customAngleRad = THREE.MathUtils.degToRad(parseFloat(comp.properties?.orientationAngle || 0));
+                const turnTowards = nextUp.clone().applyAxisAngle(currentDir, customAngleRad).normalize();
+                axis = currentDir.clone().cross(turnTowards).normalize();
+                turnSign = -1;
+            }
+            // =========================================================
 
             const branchTurn = THREE.MathUtils.degToRad(90);
 
@@ -1479,11 +1502,11 @@ else if (pType.includes('tee')) {
 
                 const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
 
-                const path1Dir = currentDir.clone().applyAxisAngle(axis, branchTurn).normalize();
-                const path1Up = nextUp.clone().applyAxisAngle(axis, branchTurn).normalize();
+                const path1Dir = currentDir.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
+                const path1Up = nextUp.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
                 
-                const path2Dir = currentDir.clone().applyAxisAngle(axis, -branchTurn).normalize();
-                const path2Up = nextUp.clone().applyAxisAngle(axis, -branchTurn).normalize();
+                const path2Dir = currentDir.clone().applyAxisAngle(axis, -branchTurn * turnSign).normalize();
+                const path2Up = nextUp.clone().applyAxisAngle(axis, -branchTurn * turnSign).normalize();
 
                 // --- Udløb 1 (Gren 1) ---
                 let gB1 = new THREE.CylinderGeometry(dOut1/2, dOut1/2, stubLen, 32);

@@ -299,10 +299,42 @@ window.handleUpdateComponent = (id) => {
 window.clearSystem = (event) => {
     if (event) event.preventDefault();
     showConfirm('Er du sikker på, at du vil starte en ny beregning? Alle data vil gå tabt.', () => {
-        clearSystem();
+        // 1. Tøm komponenter i data-modellen
+        clearSystem(); 
         document.getElementById('projectName').value = '';
-        ui.renderSystem();
-        ui.handleComponentTypeChange();
+        
+        // 2. Fjern PDF underlaget
+        if (typeof window.removePdfUnderlay === 'function') {
+            window.removePdfUnderlay();
+        }
+
+        // 3. THE PRO WAY: Nulstil radioknappen til 'Top-Down' som standard for et nyt projekt
+        const topDownRadio = document.getElementById('calcModeTopDown');
+        if (topDownRadio) {
+            topDownRadio.checked = true;
+            if (typeof window.toggleCalculationMode === 'function') {
+                window.toggleCalculationMode('top-down');
+            }
+        }
+
+        // 4. Opdater UI (Tabeller osv.)
+        if (window.ui) {
+            if (typeof window.ui.renderSystem === 'function') window.ui.renderSystem();
+            if (typeof window.ui.handleComponentTypeChange === 'function') window.ui.handleComponentTypeChange();
+        }
+        
+        // 5. Nulstil 'Auto-Save' for 3D-indstillinger
+        if (window.stateManager && window.stateManager.state) {
+            window.stateManager.state.diagramSettings = null;
+        }
+
+        // 6. THE MAGIC BULLET: Tving 3D-motoren til at genoptegne den TOMME state
+        // Dette fjerner alle kanaler og viser "VentCalculatorADV - Venter på startkomponent" logoet!
+        if (typeof window.renderDiagram === 'function') {
+            window.renderDiagram(true);
+        } else if (window.ui && typeof window.ui.renderDiagram === 'function') {
+            window.ui.renderDiagram(true);
+        }
     });
 };
 
@@ -731,7 +763,14 @@ function getFittingData(suffix, typeOverride = null) {
     };
 
     const orientation = s('sys_orientation');
-    if (orientation) properties.orientation = orientation;
+    if (orientation) {
+        properties.orientation = orientation;
+        
+        // --- NYT: Hent brugerens frie grader, hvis de valgte "Andet" ---
+        if (orientation === 'Custom' || orientation === 'Andet') {
+            properties.orientationAngle = f('sys_orientationAngle') || 0;
+        }
+    }
 
     switch (fittingType) {
         case 'bend_circ': {
@@ -1871,10 +1910,19 @@ async function initializeApp() {
         e.preventDefault();
         e.stopPropagation();
         showConfirm('Er du sikker på, at du vil starte et nyt projekt?', () => {
-            // 1. Tømmer al data, graf og localStorage
+            // 1. Kald den interne rydning
             clearSystem(); 
             
-            // 2. Den ultimative, rene nulstilling (Fjerner WebGL Zombier og nulstiller alle mobil-faner)
+            // 2. Fjern PDF underlaget manuelt (just in case)
+            if (typeof window.removePdfUnderlay === 'function') {
+                window.removePdfUnderlay();
+            }
+
+            // 3. Ryd browserens gemte 'Auto-Save' state helt, så intet genindlæses
+            // (Tilpas navnet 'vent_calc_state' hvis din stateManager bruger en anden nøgle)
+            localStorage.removeItem('vent_calc_state'); 
+            
+            // 4. Den ultimative, rene nulstilling af alle variabler og WebGL
             window.location.reload(); 
         });
     });

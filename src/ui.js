@@ -52,6 +52,16 @@ window.clearTableHighlights = function() {
     });
 };
 
+// ==========================================
+// UI KONTROL: Frie Grader Toggle
+// ==========================================
+window.toggleCustomAngleField = (val, suffix = '') => {
+    const container = document.getElementById('customAngleContainer' + suffix);
+    if (container) {
+        container.style.display = (val === 'Custom' || val === 'Andet') ? 'block' : 'none';
+    }
+};
+
 
 // --- 3D CONTEXT MENU (HUD / HOLOGRAM) ---
 window.show3DContextMenu = function(compId, mouseX, mouseY) {
@@ -1827,9 +1837,28 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
     targetContainer.innerHTML = '';
     const roundOptions = STANDARD_ROUND_SIZES_MM.map(s => `<option value="${s}">${s} mm</option>`).join('');
     const rectOptions = STANDARD_RECT_SIZES_MM.map(s => `<option value="${s}">${s} mm</option>`).join('');
-    const orientationOptions = `<option value="Left">Venstre</option><option value="Right">Højre</option><option value="Up">Op (loft)</option><option value="Down">Ned (gulv)</option>`;
-    let inputsHtml = '';
+    
     const id = (base) => `${base}${suffix}`;
+
+    // --- NYT: Den universelle retnings-vælger med skjult vinkelfelt ---
+    const getOrientationHtml = (label) => `
+        <div class="input-group">
+            <label for="${id('sys_orientation')}">${label}</label>
+            <select id="${id('sys_orientation')}" class="input-field" onchange="window.toggleCustomAngleField(this.value, '${suffix}')">
+                <option value="Left">Venstre(90grader)</option>
+                <option value="Right">Højre(270grader)</option>
+                <option value="Up">Op (loft180grader)</option>
+                <option value="Down">Ned (gulv(0 grader)</option>
+                <option value="Custom">Andet (Frie grader)</option>
+            </select>
+            <div id="customAngleContainer${suffix}" style="display: none; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; border: 1px dashed #00A4E0; width: 100%; box-sizing: border-box;">
+                <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 4px;">Frie grader (0-360)</label>
+                <input type="number" id="${id('sys_orientationAngle')}" class="input-field" step="1" value="45" style="width: 100%;">
+            </div>
+        </div>
+    `;
+
+    let inputsHtml = '';
 
     switch (fittingType) {
         case 'bend_circ':
@@ -1838,7 +1867,7 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                     <div class="input-group"><label for="${id('sys_d')}">Diameter (d)</label><select id="${id('sys_d')}" class="input-field">${roundOptions}</select></div>
                     <div class="input-group"><label for="${id('sys_angle')}">Vinkel (α)</label><input type="text" id="${id('sys_angle')}" class="input-field" value="90"></div>
                     <div class="input-group"><label for="${id('sys_rd')}">R/d ratio</label><input type="text" id="${id('sys_rd')}" class="input-field" value="1.0"></div>
-                    <div class="input-group"><label for="${id('sys_orientation')}">Retning (3D)</label><select id="${id('sys_orientation')}" class="input-field">${orientationOptions}</select></div>
+                    <div class="input-group">${getOrientationHtml('Retning (3D)')}</div>
                 </div>`;
             break;
         case 'bend_rect':
@@ -1848,7 +1877,7 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                     <div class="input-group"><label for="${id('sys_w')}">Bredde (B)</label><select id="${id('sys_w')}" class="input-field">${rectOptions}</select></div>
                     <div class="input-group"><label for="${id('sys_angle_r')}">Vinkel (α)</label><input type="text" id="${id('sys_angle_r')}" class="input-field" value="90"></div>
                     <div class="input-group"><label for="${id('sys_rh')}">R/H ratio</label><input type="text" id="${id('sys_rh')}" class="input-field" value="1.0"></div>
-                    <div class="input-group"><label for="${id('sys_orientation')}">Retning (3D)</label><select id="${id('sys_orientation')}" class="input-field">${orientationOptions}</select></div>
+                    <div class="input-group">${getOrientationHtml('Retning (3D)')}</div>
                 </div>`;
             break;
         case 'expansion':
@@ -1906,10 +1935,7 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                         </div>
                     </div>
                     <div class="sub-group">${diameterInputs}</div>
-                    <div class="sub-group">
-                        <label for="${id('sys_orientation')}">Afgreningens retning (3D)</label>
-                        <select id="${id('sys_orientation')}" class="input-field">${orientationOptions}</select>
-                    </div>
+                    ${getOrientationHtml('Afgreningens retning (3D)')}
                 </div>`;
             break;
         }
@@ -1930,10 +1956,8 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                         <div class="input-group"><label for="${id('sys_tee_d_out2')}">Ø Gren 2</label><select id="${id('sys_tee_d_out2')}" class="input-field">${roundOptions}</select></div>
                     </div>
                 </div>
-                <div class="sub-group">
-                    <label for="${id('sys_orientation')}">Planets retning (3D)</label>
-                    <select id="${id('sys_orientation')}" class="input-field">${orientationOptions}</select>
-                </div>`;
+                    ${getOrientationHtml('Planets retning (3D)')}
+                    `;
             break;
     }
 
@@ -1987,7 +2011,13 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
             if (p.d_branch) setVal(id('sys_tee_d_branch'), p.d_branch);
             if (p.d_out1) setVal(id('sys_tee_d_out1'), p.d_out1);
             if (p.d_out2) setVal(id('sys_tee_d_out2'), p.d_out2);
-            if (p.orientation) setVal(id('sys_orientation'), p.orientation);
+            if (p.orientation) {
+                setVal(id('sys_orientation'), p.orientation);
+                window.toggleCustomAngleField(p.orientation, suffix);
+            }
+            if (p.orientationAngle !== undefined) {
+                setVal(id('sys_orientationAngle'), p.orientationAngle);
+            }
             
         } else if (isInlineAdd && window.currentParentDim) {
             const dim = window.currentParentDim;
