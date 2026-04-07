@@ -11,7 +11,7 @@ import {
 } from './app_state.js';
 window.stateManager = stateManager;
 window.setCorrectionTargetId = setCorrectionTargetId;
-import { projectManager } from './projects.js';
+//import { projectManager } from './projects.js';
 import { toggleDiagramView, renderDiagram } from './diagram.js';
 import { initDesktopMode } from './desktop_ui.js';
 
@@ -76,9 +76,108 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// --- HUD Handler for at splitte kanaler ---
+window.handleSplitDuct = function(compId) {
+    if (!window.stateManager || typeof window.stateManager.splitDuct !== 'function') {
+        console.error("StateManager eller splitDuct mangler.");
+        return;
+    }
+
+    const numPartsStr = prompt("Hvor mange lige store dele vil du splitte kanalen i?", "2");
+    if (!numPartsStr) return; // Brugeren trykkede Annuller
+    
+    const numParts = parseInt(numPartsStr, 10);
+    if (isNaN(numParts) || numParts < 2 || numParts > 50) {
+        alert("Fejl: Indtast et gyldigt heltal mellem 2 og 50.");
+        return;
+    }
+
+    // Eksekver graf-manipulationen
+    window.stateManager.splitDuct(compId, numParts);
+    
+    // Gennemtving fysik-beregning (sikrer at termodynamik og tryktab passes igennem de nye noder)
+    if (typeof window.recalculateSystem === 'function') {
+        window.recalculateSystem();
+    }
+    
+    // Ryd op og opdater tabellen (hvis tabellen vises)
+    if (window.ui && typeof window.ui.renderSystem === 'function') {
+        window.ui.renderSystem();
+    }
+};
+
+// --- HUD Handlers for Kopier & Indsæt ---
+
+window.handleCopyBranch = function(compId) {
+    if (window.stateManager && typeof window.stateManager.copyBranch === 'function') {
+        window.stateManager.copyBranch(compId);
+        
+        // Giv brugeren en lille visuel bekræftelse i UI'et
+        if (window.ui && typeof window.ui.showSaveStatus === 'function') {
+            window.ui.showSaveStatus('Gren kopieret', 'saved');
+        } else {
+            console.log("Gren kopieret til udklipsholder.");
+        }
+    }
+};
+
+window.handlePasteBranch = function(targetCompId, targetPort) {
+    if (!window.clipboardBranch) {
+        alert("Du skal kopiere en gren først.");
+        return;
+    }
+
+    if (window.stateManager && typeof window.stateManager.pasteBranch === 'function') {
+        // Udfør Paste i data-modellen
+        window.stateManager.pasteBranch(targetCompId, targetPort);
+        
+        // Kør fysikmotoren igennem for at opdatere flow, tryk og temperatur
+        if (typeof window.recalculateSystem === 'function') {
+            window.recalculateSystem();
+        }
+        
+        // Genoptegn UI
+        if (window.ui && typeof window.ui.renderSystem === 'function') {
+            window.ui.renderSystem();
+            window.ui.showSaveStatus('Gren indsat', 'saved');
+        }
+    }
+};
+
 window.deleteFitting = (id) => {
     removeFitting(id);
     ui.renderFittingsResult();
+};
+
+
+
+
+// --- Toggle mellem Top-Down og Bottom-Up ---
+window.toggleCalculationMode = (mode) => {
+    if (window.stateManager) {
+        // Gem valget i systemets state
+        window.stateManager.state.calculationMode = mode;
+        
+        // Lås eller åbn for global luftmængde
+        const startFlowInput = document.getElementById('system_airflow');
+        if (startFlowInput) {
+            if (mode === 'bottom-up') {
+                startFlowInput.disabled = true;
+                startFlowInput.style.opacity = '0.5';
+                startFlowInput.title = 'Beregnes automatisk ud fra armaturerne i Bottom-Up mode';
+            } else {
+                startFlowInput.disabled = false;
+                startFlowInput.style.opacity = '1';
+                startFlowInput.title = '';
+            }
+        }
+        
+        // Tving en genberegning og opdater tabellen (så T-stykkers flow-felter også låses senere)
+        window.recalculateSystem();
+        if (window.ui && window.ui.renderSystem) {
+            window.ui.renderSystem();
+        }
+    }
 };
 
 window.handleDeleteLastComponent = () => {
@@ -169,14 +268,19 @@ window.handleUpdateComponent = (id) => {
     if (component.type === 'straightDuct') {
         newData = getDuctData(suffix);
     } else if (component.type === 'manualLoss') {
-        const name = document.getElementById('manualDescription' + suffix).value;
-        const pressureLoss = parseLocalFloat(document.getElementById('manualPressureLoss' + suffix).value);
-        newData = {
-            type: 'manualLoss',
-            name,
-            properties: { pressureLoss },
-            state: {}
-        };
+            const name = document.getElementById('manualDescription' + suffix).value;
+            const pressureLoss = parseLocalFloat(document.getElementById('manualPressureLoss' + suffix).value);
+            newData = {
+                type: 'manualLoss',
+                name,
+                // RETTELSE HER: Inkluder 'type' for at undgå fremtidige crashes ved edit
+                properties: { type: 'manualLoss', pressureLoss: pressureLoss },
+                state: {}
+            };
+    } else if (component.type === 'terminalUnit') {
+        // --- NYT: TRIN 8 - Kald funktionen til redigering af armaturer ---
+        newData = getTerminalUnitData(suffix);
+
     } else {
         newData = getFittingData(suffix, component.type);
     }
@@ -195,33 +299,43 @@ window.handleUpdateComponent = (id) => {
 window.clearSystem = (event) => {
     if (event) event.preventDefault();
     showConfirm('Er du sikker på, at du vil starte en ny beregning? Alle data vil gå tabt.', () => {
-        clearSystem();
+        // 1. Tøm komponenter i data-modellen
+        clearSystem(); 
         document.getElementById('projectName').value = '';
-        ui.renderSystem();
-        ui.handleComponentTypeChange();
-    });
-};
+        
+        // 2. Fjern PDF underlaget
+        if (typeof window.removePdfUnderlay === 'function') {
+            window.removePdfUnderlay();
+        }
 
-window.saveSystem = (event) => {
-    if (event) event.preventDefault();
-    const systemComponents = getSystemComponents();
-    const data = {
-        projectName: document.getElementById('projectName').value,
-        startAirflow: document.getElementById('system_airflow').value,
-        systemType: document.querySelector('input[name="systemFlowType"]:checked').value,
-        components: systemComponents,
-        timestamp: new Date().toISOString()
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `ventilations_system_${data.projectName || 'unnamed'}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    ui.toggleSystemMenu();
+        // 3. THE PRO WAY: Nulstil radioknappen til 'Top-Down' som standard for et nyt projekt
+        const topDownRadio = document.getElementById('calcModeTopDown');
+        if (topDownRadio) {
+            topDownRadio.checked = true;
+            if (typeof window.toggleCalculationMode === 'function') {
+                window.toggleCalculationMode('top-down');
+            }
+        }
+
+        // 4. Opdater UI (Tabeller osv.)
+        if (window.ui) {
+            if (typeof window.ui.renderSystem === 'function') window.ui.renderSystem();
+            if (typeof window.ui.handleComponentTypeChange === 'function') window.ui.handleComponentTypeChange();
+        }
+        
+        // 5. Nulstil 'Auto-Save' for 3D-indstillinger
+        if (window.stateManager && window.stateManager.state) {
+            window.stateManager.state.diagramSettings = null;
+        }
+
+        // 6. THE MAGIC BULLET: Tving 3D-motoren til at genoptegne den TOMME state
+        // Dette fjerner alle kanaler og viser "VentCalculatorADV - Venter på startkomponent" logoet!
+        if (typeof window.renderDiagram === 'function') {
+            window.renderDiagram(true);
+        } else if (window.ui && typeof window.ui.renderDiagram === 'function') {
+            window.ui.renderDiagram(true);
+        }
+    });
 };
 
 window.triggerFileLoad = (event) => {
@@ -649,7 +763,14 @@ function getFittingData(suffix, typeOverride = null) {
     };
 
     const orientation = s('sys_orientation');
-    if (orientation) properties.orientation = orientation;
+    if (orientation) {
+        properties.orientation = orientation;
+        
+        // --- NYT: Hent brugerens frie grader, hvis de valgte "Andet" ---
+        if (orientation === 'Custom' || orientation === 'Andet') {
+            properties.orientationAngle = f('sys_orientationAngle') || 0;
+        }
+    }
 
     switch (fittingType) {
         case 'bend_circ': {
@@ -766,6 +887,49 @@ function getFittingData(suffix, typeOverride = null) {
     return result;
 }
 
+// --- Data-opsamling for Armatur / Terminal Unit ---
+function getTerminalUnitData(suffix) {
+    const elName = document.getElementById('sys_term_name' + suffix);
+    const elFlow = document.getElementById('sys_term_flow' + suffix);
+    const elDp = document.getElementById('sys_term_dp' + suffix);
+    const elDim = document.getElementById('sys_term_dim' + suffix);
+    const elDir = document.getElementById('sys_term_dir' + suffix);
+
+    if (!elFlow || !elDp || !elDim) return null;
+
+    const name = elName.value.trim() || 'Armatur';
+    const flow = parseLocalFloat(elFlow.value) || 0;
+    const pressureLoss = parseLocalFloat(elDp.value) || 0;
+    const diameter = parseLocalFloat(elDim.value) || 125;
+    const direction = elDir ? elDir.value : 'auto';
+
+    return {
+        type: 'terminalUnit',
+        name: name,
+        details: `q: ${flow} m³/h, Ø${diameter}`,
+        properties: {
+            type: 'terminalUnit', // Sikrer konsistens
+            pressureLoss: pressureLoss,
+            diameter: diameter,
+            d: diameter,
+            shape: 'round',
+            direction: direction,
+            // q_room repræsenterer det faktiske behov i rummet
+            q_room: flow 
+        },
+        state: {
+            // I Bottom-Up skal dette flow senere regnes BAGLÆNS. 
+            // For nu gemmer vi det bare statisk for at få grafen bygget.
+            airflow_in: flow,
+            airflow_out: { 'outlet': flow },
+            pressureLoss: pressureLoss,
+            velocity: null, // Bliver regnet ud fra arealet senere
+            inletDimension: { shape: 'round', d: diameter },
+            outletDimension: { 'outlet': { shape: 'round', d: diameter } }
+        }
+    };
+}
+
 function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomingDim, globalParams, calculateThermodynamicsFlag = true) {
     const { RHO, NU, globalAmbient, systemTemp } = globalParams;
     let newCalc = {};
@@ -778,7 +942,7 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
     let t_out_val = incomingTemp;
     let q_loss_val = 0;
 
-    if (component.type === 'straightDuct') {
+if (component.type === 'straightDuct') {
         const Q = incomingFlow / 3600;
         let performance, inletDim, outletDim, perimeter;
 
@@ -811,17 +975,35 @@ function calculateComponentPhysics(component, incomingFlow, incomingTemp, incomi
             temperature_out: { 'outlet': t_out_val },
             heatLoss: q_loss_val
         };
-    } else if (component.type === 'manualLoss') {
-        const inletDim = incomingDim || { shape: 'round', d: 0 };
+
+    // --- Fælles håndtering af ManualLoss og TerminalUnit ---
+    } else if (component.type === 'manualLoss' || component.type === 'terminalUnit') {
+        let inletDim = incomingDim || { shape: 'round', d: 0 };
+        let v = null;
+        let calcDetails = null;
+
+        // Armaturer har en specifik tilslutningsdimension, så vi kan udregne hastigheden i studsen
+        if (component.type === 'terminalUnit') {
+            const d_mm = p.diameter || p.d || 125;
+            inletDim = { shape: 'round', d: d_mm };
+            
+            // Hastighed i studsen: v = Q / A
+            const A_m2 = Math.PI * Math.pow(d_mm / 2000, 2);
+            if (A_m2 > 0) {
+                v = (incomingFlow / 3600) / A_m2;
+                calcDetails = { A_m2: A_m2, v_ms: v, type: 'terminalUnit' };
+            }
+        }
+
         newCalc = {
             airflow_in: incomingFlow,
             airflow_out: { 'outlet': incomingFlow },
-            velocity: null,
-            pressureLoss: p.pressureLoss,
+            velocity: v,
+            pressureLoss: p.pressureLoss || 0, // Her hentes armaturets Pa ind i systemet!
             zeta: null,
             inletDimension: inletDim,
             outletDimension: { 'outlet': inletDim },
-            calculationDetails: null,
+            calculationDetails: calcDetails,
             temperature_in: incomingTemp,
             temperature_out: { 'outlet': t_out_val },
             heatLoss: 0
@@ -1133,15 +1315,85 @@ function recalculateSystem() {
     const { RHO, NU } = physics.getAirProperties(temp);
     const globalParams = { globalFlowType, globalAmbient, globalRH, RHO, NU, systemTemp: temp };
 
+    // -------------------------------------------------------------------------
+    // --- NYT: TRIN 8.4 & 8.5 - Pass 1 (Bottom-Up Flow Summation & Orphans) ---
+    // -------------------------------------------------------------------------
+    function traverseAndSumFlow(nodeId) {
+        const comp = userNodes[nodeId];
+        if (!comp) return 0;
+
+        const childrenEdges = userEdges.filter(e => e.from === nodeId);
+
+        // Vi er nået til enden af en gren (Leaf Node)
+        if (childrenEdges.length === 0) {
+            if (comp.type === 'terminalUnit') {
+                // Armaturet returnerer sit eget flow
+                return comp.properties.q_room || 0;
+            } else {
+                // Blinde ender (Orphan nodes)
+                if (stateManager.state.calculationMode === 'bottom-up') {
+                    comp.details = '<span style="color:var(--error-color); font-weight:bold;">OBS! Mangler luftmængde</span>';
+                }
+                return 0; // Orphan node giver 0 flow, fysikken håndterer derefter 0 m/s
+            }
+        } else {
+            // Fjern evt. forældet advarsel, nu hvor komponenten har fået børn (Healing)
+            if (comp.details === '<span style="color:var(--error-color); font-weight:bold;">OBS! Mangler luftmængde</span>') {
+                comp.details = '';
+            }
+        }
+
+        let totalFlow = 0;
+        const portFlows = {};
+
+        // Traverser baglæns op (Post-Order)
+        childrenEdges.forEach(edge => {
+            const childFlow = traverseAndSumFlow(edge.to);
+            portFlows[edge.fromPort] = childFlow;
+            totalFlow += childFlow;
+        });
+
+        // Hvis det er et T-stykke, gennemtvinger vi flow-fordelingen fra armaturerne,
+        // så Pass 2 udregner Zeta-værdier ud fra det virkelige behov!
+        if (comp.type && comp.type.includes('tee')) {
+            if (comp.type === 'tee_bullhead') {
+                comp.properties.q_out1 = portFlows['outlet_path1'] || 0;
+                comp.properties.q_out2 = portFlows['outlet_path2'] || 0;
+            } else {
+                comp.properties.q_straight = portFlows['outlet_straight'] || 0;
+                comp.properties.q_branch = portFlows['outlet_branch'] || 0;
+            }
+        }
+
+        return totalFlow;
+    }
+
+    const rootIds = Object.keys(userNodes).filter(id => !userEdges.find(e => e.to === id));
+
+    let dynamicStartAirflow = startAirflow;
+    
+    // Udfør kun Pass 1, hvis systemet står i Bottom-Up
+    if (window.stateManager && window.stateManager.state.calculationMode === 'bottom-up') {
+        let systemTotalFlow = 0;
+        rootIds.forEach(rootId => {
+            systemTotalFlow += traverseAndSumFlow(rootId);
+        });
+        dynamicStartAirflow = systemTotalFlow;
+        
+        // Visuel opdatering af UI for at afspejle den samlede sum i roden
+        if (startAirflowEl) {
+            startAirflowEl.value = dynamicStartAirflow;
+        }
+    }
+    // -------------------------------------------------------------------------
+
     stateManager.clearSystem();
 
-    // --- NYT: Sikkerhed mod cirkulære referencer (Forhindrer Call Stack Error) ---
     const visitedNodesCalc = new Set();
 
     function traverseAndCalculate(nodeId, incomingFlow, incomingTemp, incomingDim, parentId, parentPort) {
-        // Stopper øjeblikkeligt uendelige loops
         if (visitedNodesCalc.has(nodeId)) {
-            console.error(`[Fysik-Motor] Cirkulær reference opdaget ved node: ${nodeId}. Afbryder for at beskytte browseren!`);
+            console.error(`[Fysik-Motor] Cirkulær reference opdaget ved node: ${nodeId}. Afbryder.`);
             return;
         }
         visitedNodesCalc.add(nodeId);
@@ -1157,7 +1409,6 @@ function recalculateSystem() {
         let currentParentId = parentId;
         let currentParentPort = parentPort;
 
-        // VIGTIGT: Vi bruger ALTID den visuelle 'inletDimension' som tilknytningspunkt.
         let childAttachDim = newCalc.inletDimension;
 
         if (incomingDim && childAttachDim && !physics.areDimensionsEqual(incomingDim, childAttachDim)) {
@@ -1203,20 +1454,15 @@ function recalculateSystem() {
         });
     }
 
-    const rootIds = Object.keys(userNodes).filter(id => !userEdges.find(e => e.to === id));
-
+    // Her sender vi nu 'dynamicStartAirflow' afsted (som enten er inputtet, eller summen fra Armaturerne!)
     rootIds.forEach(rootId => {
-        traverseAndCalculate(rootId, startAirflow, temp, null, null, null);
+        traverseAndCalculate(rootId, dynamicStartAirflow, temp, null, null, null);
     });
 
-    // --- NYT: Sikkerhed mod cirkulære referencer i Termodynamik ---
     const visitedNodesThermo = new Set();
 
     function traverseAndCalculateThermodynamics(nodeId, incomingTemp) {
-        // Stopper øjeblikkeligt uendelige loops i temperatur-beregningen
-        if (visitedNodesThermo.has(nodeId)) {
-            return incomingTemp;
-        }
+        if (visitedNodesThermo.has(nodeId)) return incomingTemp;
         visitedNodesThermo.add(nodeId);
 
         const comp = getSystemComponent(nodeId);
@@ -1226,7 +1472,6 @@ function recalculateSystem() {
         const childrenEdges = stateManager.getGraph().edges.filter(e => e.from === nodeId); 
         comp.state.heatLoss = 0; 
 
-        // --- FORBEDRET OVERFLADE BEREGNING (Fanger nu alt!) ---
         const getSurfaceProps = (c) => {
             let length = 0;
             let perimeter = 0;
@@ -1309,7 +1554,6 @@ function recalculateSystem() {
                 const res = physics.calculateTemperatureDrop(t_in, amb, surface.length, surface.perimeter, q_m_kgs, isoTh, isoL, globalParams.globalRH);
                 t_out['outlet'] = res.t_out;
                 
-                // Opdater også gren-udgangene for Bøjninger og T-stykker
                 t_out['outlet_straight'] = res.t_out;
                 t_out['outlet_branch'] = res.t_out;
                 t_out['outlet_path1'] = res.t_out;
@@ -1411,7 +1655,6 @@ function recalculateSystem() {
     ui.renderSystem();
     ui.handleComponentTypeChange();
 
-    // --- LIVE OPDATERING AF 3D (SOFT REFRESH) ---
     const diagContainer = document.getElementById('systemDiagramContainer');
     const isDesktop = document.body.classList.contains('desktop-mode');
     const isDiagActive = diagContainer && diagContainer.classList.contains('active');
@@ -1422,6 +1665,7 @@ function recalculateSystem() {
         }
     }
 }
+
 window.recalculateSystem = recalculateSystem;
 
 // --- INDSÆTTELSE AF NY KOMPONENT & AUTO-OVERGANG ---
@@ -1443,7 +1687,18 @@ window.handleInlineComponentSubmit = function (event, passedSuffix) {
     if (isNaN(temp)) return alert("Ugyldig temperatur.");
 
     let currentAirflow = parseLocalFloat(document.getElementById('system_airflow').value);
-    if (isNaN(currentAirflow) || currentAirflow <= 0) return alert("Ugyldig start luftmængde.");
+    
+    // --- NYT: TRIN 8 - Bottom-up validerings-bypass ---
+    const isBottomUp = window.stateManager && window.stateManager.state.calculationMode === 'bottom-up';
+
+    if (!isBottomUp && (isNaN(currentAirflow) || currentAirflow <= 0)) {
+        return alert("Ugyldig start luftmængde. Indtast anlæggets startflow.");
+    }
+    
+    // I Bottom-Up mode tillader vi 0 flow ved oprettelse (det regnes baglæns senere)
+    if (isBottomUp && (isNaN(currentAirflow) || currentAirflow < 0)) {
+        currentAirflow = 0; 
+    }
 
     const parentId = window.currentAddParentId;
     const parentPort = window.currentAddParentPort;
@@ -1472,21 +1727,25 @@ window.handleInlineComponentSubmit = function (event, passedSuffix) {
         }
         const fittingType = fittingTypeSelect ? fittingTypeSelect.value : null;
         component = getFittingData(suffix, fittingType);
-    } else if (type === 'manualLoss') {
-        const descId = document.getElementById('manualDescription' + suffix) ? 'manualDescription' + suffix : 'manualDescription';
-        const pressId = document.getElementById('manualPressureLoss' + suffix) ? 'manualPressureLoss' + suffix : 'manualPressureLoss';
-        const name = document.getElementById(descId).value || 'Manuel Komponent';
-        const pressureLoss = parseLocalFloat(document.getElementById(pressId).value);
-        if (isNaN(pressureLoss)) {
-            alert("Ugyldigt tryktab!");
-            return;
-        }
-        component = {
-            type: 'manualLoss',
-            name: name,
-            properties: { pressureLoss },
-            state: {}
-        };
+        } else if (type === 'manualLoss') {
+            const descId = document.getElementById('manualDescription' + suffix) ? 'manualDescription' + suffix : 'manualDescription';
+            const pressId = document.getElementById('manualPressureLoss' + suffix) ? 'manualPressureLoss' + suffix : 'manualPressureLoss';
+            const name = document.getElementById(descId).value || 'Manuel Komponent';
+            const pressureLoss = parseLocalFloat(document.getElementById(pressId).value);
+            if (isNaN(pressureLoss)) {
+                alert("Ugyldigt tryktab!");
+                return;
+            }
+            component = {
+                type: 'manualLoss',
+                name: name,
+                // RETTELSE HER: Inkluder 'type', så physics surface-tjekket ikke crasher
+                properties: { type: 'manualLoss', pressureLoss: pressureLoss },
+                state: {}
+            };
+        } else if (type === 'terminalUnit') {
+        // --- Kald funktionen til armaturer ---
+        component = getTerminalUnitData(suffix);
     }
 
     if (component) {
@@ -1622,60 +1881,12 @@ async function initializeApp() {
     const projectModal = document.getElementById('projectModal');
     const projectListContainer = document.getElementById('projectList');
 
-    const openProjectModal = (mode) => {
-        try {
-            renderProjectList();
-            projectModal.classList.remove('hidden');
-            window.toggleSystemMenu(); 
-        } catch (e) {
-            console.error('Error in openProjectModal:', e);
-        }
-    };
-
-    const saveProjectAs = () => {
-        window.toggleSystemMenu(); 
-        let currentName = document.getElementById('projectName').value;
-        const name = prompt("Indtast projektnavn:", currentName);
-        if (name) {
-            try {
-                if (projectManager.projectExists(name)) {
-                    showConfirm(`Projektet "${name}" findes allerede. Vil du overskrive det?`, () => {
-                        try {
-                            projectManager.updateProject(name);
-                            document.getElementById('projectName').value = name;
-                            renderProjectList();
-                            alert(`Projekt "${name}" gemt.`);
-                        } catch (err) {
-                            alert('Fejl: ' + err.message);
-                        }
-                    });
-                } else {
-                    projectManager.createProject(name);
-                    document.getElementById('projectName').value = name;
-                    renderProjectList();
-                    alert(`Projekt "${name}" gemt.`);
-                }
-            } catch (err) {
-                alert('Fejl: ' + err.message);
-            }
-        }
-    };
-
     document.getElementById('btnMenuNew').addEventListener('click', (e) => {
         e.stopPropagation();
         window.toggleSystemMenu(); 
         window.clearSystem();
     });
-    document.getElementById('btnMenuLoad').addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openProjectModal('load');
-    });
-    document.getElementById('btnMenuSaveAs').addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        saveProjectAs();
-    });
+
     document.getElementById('btnMenuSaveFile').addEventListener('click', (e) => {
         e.stopPropagation();
         window.saveSystem(e);
@@ -1695,80 +1906,25 @@ async function initializeApp() {
         }
     });
 
-    function renderProjectList() {
-        if (!projectListContainer) return;
-        const projects = projectManager.listProjects();
-        projectListContainer.innerHTML = '';
-
-        if (projects.length === 0) {
-            projectListContainer.innerHTML = '<p style="text-align: center; color: var(--text-muted-color);">Ingen gemte projekter.</p>';
-            return;
-        }
-
-        projects.forEach(proj => {
-            const el = document.createElement('div');
-            el.className = 'project-item';
-            const dateStr = new Date(proj.timestamp).toLocaleString('da-DK');
-            el.innerHTML = `
-                <div class="project-info">
-                    <h3>${proj.name}</h3>
-                    <p>Gemt: ${dateStr}</p>
-                </div>
-                <div class="project-actions">
-                    <button class="project-btn load" data-name="${proj.name}" title="Hent">📂</button>
-                    <button class="project-btn delete" data-name="${proj.name}" title="Slet">🗑️</button>
-                </div>
-            `;
-            projectListContainer.appendChild(el);
-        });
-
-        projectListContainer.querySelectorAll('.load').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation(); 
-                const name = e.currentTarget.dataset.name;
-                showConfirm(`Vil du hente projektet "${name}"? Nuværende ikke-gemte ændringer vil gå tabt.`, () => {
-                    try {
-                        projectManager.loadProject(name);
-                        projectModal.classList.add('hidden');
-                        ui.renderSystem();
-                        ui.handleComponentTypeChange();
-                        document.getElementById('projectName').value = name;
-                        alert(`Projekt "${name}" hentet.`);
-                    } catch (err) {
-                        alert('Fejl: ' + err.message);
-                    }
-                });
-            });
-        });
-
-        projectListContainer.querySelectorAll('.delete').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const name = e.currentTarget.dataset.name;
-                showConfirm(`Er du sikker på, at du vil slette projektet "${name}"?`, () => {
-                    projectManager.deleteProject(name);
-                    renderProjectList();
-                });
-            });
-        });
-    }
-
     document.getElementById('btnNewProject').addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
         showConfirm('Er du sikker på, at du vil starte et nyt projekt?', () => {
-            clearSystem();
-            document.getElementById('projectName').value = '';
-            ui.renderSystem();
-            ui.handleComponentTypeChange();
-            projectModal.classList.add('hidden');
-        });
-    });
+            // 1. Kald den interne rydning
+            clearSystem(); 
+            
+            // 2. Fjern PDF underlaget manuelt (just in case)
+            if (typeof window.removePdfUnderlay === 'function') {
+                window.removePdfUnderlay();
+            }
 
-    document.getElementById('btnSaveProjectAs').addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        saveProjectAs();
+            // 3. Ryd browserens gemte 'Auto-Save' state helt, så intet genindlæses
+            // (Tilpas navnet 'vent_calc_state' hvis din stateManager bruger en anden nøgle)
+            localStorage.removeItem('vent_calc_state'); 
+            
+            // 4. Den ultimative, rene nulstilling af alle variabler og WebGL
+            window.location.reload(); 
+        });
     });
 
     ui.populateDatalists();
@@ -1818,10 +1974,11 @@ async function initializeApp() {
 
     ui.updateUndoRedoUI(canUndo(), canRedo());
 
-    // --- UDFORDRING 1: AUTO-LOAD (Mulighed B) ---
-    // Synkroniser UI felter med den netop indlæste state fra localStorage
+
+    // --- USYNLIG AUTO-SAVE (CRASH RECOVERY) ---
+    // Hvis siden opdateres ved en fejl, prøver vi at hente det midlertidige state
     const loadedState = stateManager.state;
-    if (loadedState) {
+    if (loadedState && Object.keys(loadedState).length > 0) {
         if (loadedState.projectName) document.getElementById('projectName').value = loadedState.projectName;
         if (loadedState.startAirflow) document.getElementById('system_airflow').value = loadedState.startAirflow;
         if (loadedState.temperature) document.getElementById('temperature').value = loadedState.temperature;
@@ -1829,10 +1986,13 @@ async function initializeApp() {
             const radio = document.querySelector(`input[name="systemFlowType"][value="${loadedState.systemType}"]`);
             if (radio) radio.checked = true;
         }
+        
+        // Gendan 3D visningsindstillinger med en kort forsinkelse, så motoren er startet
+        if (loadedState.diagramSettings && typeof window.applyDiagramSettings === 'function') {
+            setTimeout(() => window.applyDiagramSettings(loadedState.diagramSettings), 200);
+        }
     }
-
-    // Sørger for at UI'et afspejler data hentet fra localStorage med det samme
-    ui.renderFittingsResult();
+    
     if (window.recalculateSystem) window.recalculateSystem();
 
     // --- UDFORDRING 2: BESKYTTELSE MOD TAB AF DATA ---
@@ -1848,17 +2008,26 @@ async function initializeApp() {
     });
 }
 
+// ==========================================
+// FIL-HÅNDTERING (.JSON)
+// ==========================================
+
 window.loadSystem = (event) => {
     const file = event.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
         try {
             const data = JSON.parse(e.target.result);
             document.getElementById('projectName').value = data.projectName || '';
 
             if (data.state) {
                 stateManager.importState(data.state);
+                
+                // --- NYT: SUGER 3D INDSTILLINGER OG PDF IND! ---
+                if (data.state.diagramSettings && typeof window.applyDiagramSettings === 'function') {
+                    await window.applyDiagramSettings(data.state.diagramSettings);
+                }
             } else {
                 const legacyState = {
                     systemComponents: data.components || [],
@@ -1874,6 +2043,9 @@ window.loadSystem = (event) => {
 
             if (window.recalculateSystem) window.recalculateSystem();
             ui.toggleSystemMenu();
+            
+            // Tillad indlæsning af samme fil igen
+            event.target.value = '';
         } catch (error) {
             alert('Fejl ved indlæsning af fil: ' + error.message);
         }
@@ -1881,22 +2053,20 @@ window.loadSystem = (event) => {
     reader.readAsText(file);
 };
 
-window.triggerFileLoad = () => {
-    window.toggleSystemMenu(); 
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = window.loadSystem;
-    input.click();
-};
-
 window.saveSystem = () => {
     window.toggleSystemMenu(); 
+    
+    // --- NYT: HENTER PDF OG 3D SETTINGS INDEN GEM! ---
+    if (typeof window.getDiagramSettings === 'function') {
+        stateManager.state.diagramSettings = window.getDiagramSettings();
+    }
+    
     const projectName = document.getElementById('projectName').value || 'ventilation_projekt';
     const dataToSave = {
         projectName: projectName,
         state: stateManager.state 
     };
+    
     const blob = new Blob([JSON.stringify(dataToSave, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1905,6 +2075,162 @@ window.saveSystem = () => {
     a.click();
     URL.revokeObjectURL(url);
 };
+
+// Hjælpefunktion til UI-knappen
+window.triggerFileLoad = () => {
+    window.toggleSystemMenu(); 
+    // Hvis du ikke allerede har et <input type="file" id="sysFileLoader" ...> i din HTML, laver vi det dynamisk:
+    let fileInput = document.getElementById('sysFileLoader');
+    if (!fileInput) {
+        fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.id = 'sysFileLoader';
+        fileInput.accept = '.json';
+        fileInput.style.display = 'none';
+        fileInput.addEventListener('change', window.loadSystem);
+        document.body.appendChild(fileInput);
+    }
+    fileInput.click();
+};
+
+/**
+ * @param {string} newType - 'splitting' (Indblæsning) eller 'merging' (Udsugning)
+ */
+window.handleSystemDirectionChange = function(newType) {
+    if (!window.stateManager) {
+        console.error("[Controller] StateManager ikke fundet. Kan ikke skifte retning.");
+        return;
+    }
+
+    // 1. Opdater global state (vi sætter begge for fuld kompatibilitet)
+    window.stateManager.state.systemType = newType;
+    window.stateManager.state.systemFlowType = newType;
+    
+    // 2. Hent hele BOT-grafen for at synkronisere armaturer (Trin 8.7)
+    const graph = window.stateManager.getGraph();
+    let terminalsUpdated = 0;
+
+    Object.values(graph.nodes).forEach(node => {
+        if (node.type === 'terminalUnit') {
+            if (!node.properties) node.properties = {};
+            // Synkroniser armaturets iboende retning med anlæggets
+            node.properties.direction = (newType === 'splitting') ? 'supply' : 'extract';
+            terminalsUpdated++;
+        }
+    });
+
+    // 3. Log og gem state (uden at spamme Undo-stakken)
+    console.log(`[Fysik-Motor] Retning ændret til: ${newType === 'splitting' ? 'Indblæsning' : 'Udsugning'}. Synkroniserede ${terminalsUpdated} armaturer.`);
+    window.stateManager.persist();
+
+    // 4. Gennemtving et fuldt 2-Pass Recalculate
+    if (typeof window.recalculateSystem === 'function') {
+        window.recalculateSystem();
+    }
+};
+
+// --- Event Listener Binding ---
+// Binder automatisk logikken til dine eksisterende radio-knapper for anlægstype
+document.addEventListener('DOMContentLoaded', () => {
+    const flowTypeRadios = document.querySelectorAll('input[name="systemFlowType"]');
+if (flowTypeRadios.length > 0) {
+    const graph = window.stateManager ? window.stateManager.getGraph() : { nodes: {} };
+    const nodeCount = Object.keys(graph.nodes).length;
+    
+    // NYT: Tjek om vi er i Bottom-Up mode
+    const isBottomUp = window.stateManager && window.stateManager.state.calculationMode === 'bottom-up';
+
+    // Vi låser KUN radio-knapperne, hvis systemet har noder, OG vi IKKE er i Bottom-Up mode!
+    const shouldLock = nodeCount > 0 && !isBottomUp;
+
+    flowTypeRadios.forEach(radio => {
+        radio.disabled = shouldLock;
+    });
+}
+});
+
+// ==========================================
+// TASTATURGENVEJE CTRL v,c,DEL,ESC
+// ==========================================
+
+window.selectedComponentId = null;
+window.selectedComponentPort = null;
+
+// 1. Fang markeringer fra 3D-modellen
+const originalHighlight3D = window.highlight3DComponent;
+window.highlight3DComponent = function(id, port) {
+    // KØR 3D-MOTORENS LOGIK FØRST (som inkluderer reset)
+    if (originalHighlight3D) originalHighlight3D(id, port);
+    
+    // GEM ID'ET BAGEFTER, så det ikke bliver overskrevet!
+    window.selectedComponentId = id;
+    window.selectedComponentPort = port || null;
+};
+
+// 2. Fang markeringer fra 2D Tabellen
+const originalHighlightTableRow = window.highlightTableRow;
+window.highlightTableRow = function(id, port) {
+    if (originalHighlightTableRow) originalHighlightTableRow(id, port);
+    window.selectedComponentId = id;
+    window.selectedComponentPort = port || null;
+};
+
+// 3. Fang nulstilling (når man klikker i tomrummet eller trykker Esc)
+const originalReset3D = window.reset3DHighlight;
+window.reset3DHighlight = function() {
+    window.selectedComponentId = null;
+    window.selectedComponentPort = null;
+    if (originalReset3D) originalReset3D();
+};
+
+document.addEventListener('keydown', (e) => {
+    const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+    if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') return;
+
+    const isCtrl = e.ctrlKey || e.metaKey;
+    const selId = window.selectedComponentId;
+
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        if (typeof window.reset3DHighlight === 'function') window.reset3DHighlight();
+        const hud = document.getElementById('hudContextMenu');
+        if (hud) hud.remove();
+        document.querySelectorAll('.highlighted-row').forEach(row => row.classList.remove('highlighted-row'));
+        window.selectedComponentId = null;
+        window.selectedComponentPort = null;
+    }
+    else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selId) {
+            e.preventDefault();
+            if (typeof window.handleDeleteComponent === 'function') {
+                window.handleDeleteComponent(selId);
+                window.selectedComponentId = null;
+                window.selectedComponentPort = null;
+            }
+        }
+    }
+    else if (isCtrl && e.key.toLowerCase() === 'c') {
+        if (selId) {
+            e.preventDefault();
+            if (typeof window.handleCopyBranch === 'function') window.handleCopyBranch(selId);
+        }
+    }
+    else if (isCtrl && e.key.toLowerCase() === 'v') {
+        if (selId && window.clipboardBranch) {
+            e.preventDefault();
+            const comp = window.stateManager ? window.stateManager.getSystemComponent(selId) : null;
+            
+            // BRUGER PORTEN FRA KLIKKET, ellers falder den tilbage til et kvalificeret gæt
+            let targetPort = window.selectedComponentPort || 'outlet';
+            
+            if (!window.selectedComponentPort && comp && comp.type.startsWith('tee_')) {
+                 targetPort = comp.type === 'tee_bullhead' ? 'outlet_path1' : 'outlet_straight'; 
+            }
+            
+            if (typeof window.handlePasteBranch === 'function') window.handlePasteBranch(selId, targetPort);
+        }
+    }
+});
 
 document.addEventListener('DOMContentLoaded', initializeApp);
 

@@ -1,5 +1,5 @@
 /**
- * Desktop Mode Manager (Easter Egg Beta)
+ * Desktop Mode Manager (Easter Egg)
  * Håndterer logikk og layout-skift til split-screen.
  * (Selve CSS-styling ligger nå i style.css for bedre vedlikehold)
  */

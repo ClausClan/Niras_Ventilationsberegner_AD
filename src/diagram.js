@@ -1,24 +1,38 @@
 import { getSystemComponents } from './app_state.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { renderPdfToCanvas } from './pdf_manager.js';
 
 let diagramSettings = {
     colorMode: 'default',
     labels: {
-        name: true,
-        dim: false,
-        flow: false,
-        vel: false,
-        press: false,
-        pam: false,
-        temp: false,
-        isoMm: false
+        name: true, dim: false, flow: false, vel: false, 
+        press: false, pam: false, temp: false, isoMm: false
     },
     textSettingsExpanded: false, 
-    effectsSettingsExpanded: false, // NY: Holder styr på om effekter er klappet ud
+    effectsSettingsExpanded: false,
+    gridSettingsExpanded: false, // NY: Holder styr på grid-menuen
+    grid: {
+        spacingMm: 1000, // Standard 1 meter mellem linjer
+        elevationMm: -500 // Standard 0.5m under center (kote)
+    },
     animateFlow: false,          
     showInsulation: false,       
-    threshold: 0
+    threshold: 0,
+    // PDF indstillingerne
+    pdfSettingsExpanded: false,
+    pdfConfig: {
+        active: false,
+        opacity: 0.6,
+        scaleMode: '100', // F.eks. '50' for 1:50, '100' for 1:100, eller 'custom'
+        customScale: 100, // Den præcise målestoksfaktor
+        offsetX_mm: 0,
+        offsetZ_mm: 0,
+        isSettingOrigin: false,
+        calibrationState: 0, // 0 = inaktiv, 1 = venter på punkt 1, 2 = venter på punkt 2
+        calibPt1: null,
+        pdfData: null
+    }
 };
 
 // Global flow tekstur til animationsloopet
@@ -43,11 +57,123 @@ window.updateDiagramSettings = () => {
     diagramSettings.animateFlow = check('chk_anim_flow');
     diagramSettings.showInsulation = check('chk_show_iso');
 
+    const gridSpacing = document.getElementById('num_grid_spacing');
+    if (gridSpacing) diagramSettings.grid.spacingMm = parseFloat(gridSpacing.value) || 1000;
+
+    const gridElevation = document.getElementById('num_grid_elevation');
+    if (gridElevation) diagramSettings.grid.elevationMm = parseFloat(gridElevation.value) || 0;
+
+    renderDiagram(true);
+
     const allChecked = Object.values(diagramSettings.labels).every(val => val);
     const lblAll = document.getElementById('lbl_all');
     if (lblAll) lblAll.checked = allChecked;
 
     renderDiagram(true);
+};
+
+// ==========================================
+// PDF UI HANDLERS & KALIBRERING
+// ==========================================
+window.togglePdfSettings = () => {
+    diagramSettings.pdfSettingsExpanded = !diagramSettings.pdfSettingsExpanded;
+    const content = document.getElementById('pdfSettingsContent');
+    const icon = document.getElementById('pdfSettingsIcon');
+    if (content && icon) {
+        content.style.display = diagramSettings.pdfSettingsExpanded ? 'block' : 'none';
+        icon.innerText = diagramSettings.pdfSettingsExpanded ? '▼' : '▶';
+    }
+};
+
+window.handlePdfUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const statusEl = document.getElementById('pdfUploadStatus');
+    if (statusEl) statusEl.innerText = "Tykt tygger på PDF... Vent venligst.";
+
+    try {
+        const canvas = await renderPdfToCanvas(file);
+        diagramSettings.pdfConfig.active = true;
+        
+        // GEM PDF'en som Base64 tekst, så den kommer med i .json eksporten!
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            diagramSettings.pdfConfig.pdfData = e.target.result; 
+        };
+        reader.readAsDataURL(file);
+
+        window.applyPdfUnderlay(canvas);
+        if (statusEl) statusEl.innerText = "PDF Indlæst & Gemt i projektet!";
+    } catch (err) {
+        console.error(err);
+        if (statusEl) statusEl.innerHTML = "<span style='color:var(--error-color)'>Fejl ved indlæsning. Er det en valid PDF?</span>";
+    }
+};
+
+window.removePdfUnderlay = () => {
+    const fileInput = document.getElementById('pdfFileInput');
+    if (fileInput) fileInput.value = '';
+    
+    diagramSettings.pdfConfig.active = false;
+    diagramSettings.pdfConfig.pdfData = null; // Tøm hukommelsen
+    
+    const statusEl = document.getElementById('pdfUploadStatus');
+    if (statusEl) statusEl.innerText = "";
+    
+    if (typeof window.applyPdfUnderlay === 'function') {
+        window.applyPdfUnderlay(null);
+    }
+};
+
+window.updatePdfSettings = () => {
+    const cfg = diagramSettings.pdfConfig;
+    const opacityEl = document.getElementById('num_pdf_opacity');
+    const scaleEl = document.getElementById('sel_pdf_scale');
+    const offsetXEl = document.getElementById('num_pdf_offset_x');
+    const offsetZEl = document.getElementById('num_pdf_offset_z');
+
+    if (opacityEl) cfg.opacity = parseFloat(opacityEl.value);
+    if (scaleEl) cfg.scaleMode = scaleEl.value;
+    if (offsetXEl) cfg.offsetX_mm = parseFloat(offsetXEl.value);
+    if (offsetZEl) cfg.offsetZ_mm = parseFloat(offsetZEl.value);
+
+    // Skjul/vis kalibreringsknappen baseret på dropdown
+    const calibBtn = document.getElementById('btn_pdf_calibrate');
+    if (calibBtn) calibBtn.style.display = cfg.scaleMode === 'custom' ? 'block' : 'none';
+
+    if (pdfPlaneMesh && pdfTextureCanvas) {
+        pdfPlaneMesh.material.opacity = cfg.opacity;
+        
+        // Genberegn dimensioner baseret på valgt målestok
+        let activeScale = cfg.scaleMode === 'custom' ? cfg.customScale : parseFloat(cfg.scaleMode);
+        let width3D = pdfTextureCanvas.width * PDF_TO_3D_FACTOR * activeScale;
+        let height3D = pdfTextureCanvas.height * PDF_TO_3D_FACTOR * activeScale;
+
+        pdfPlaneMesh.geometry.dispose();
+        pdfPlaneMesh.geometry = new THREE.PlaneGeometry(width3D, height3D);
+        
+        const elevation3D = (diagramSettings.grid.elevationMm / 1000) * 100; 
+        // Divider med 10, da 1 3D enhed = 10 mm
+        pdfPlaneMesh.position.set(cfg.offsetX_mm / 10, elevation3D - 1, cfg.offsetZ_mm / 10);
+        
+        if (renderer && camera) renderer.render(scene, camera);
+    }
+};
+
+// UI Triggers til CAD-Værktøjerne
+window.startPdfOriginPlacement = () => {
+    diagramSettings.pdfConfig.isSettingOrigin = true;
+    diagramSettings.pdfConfig.calibrationState = 0;
+    alert("Klik et sted på plantegningen for at gøre det til dit (0,0) startpunkt for rørene.");
+};
+
+window.startPdfCalibration = () => {
+    diagramSettings.pdfConfig.scaleMode = 'custom';
+    diagramSettings.pdfConfig.calibrationState = 1;
+    diagramSettings.pdfConfig.isSettingOrigin = false;
+    alert("KALIBRERING:\nKlik på det FØRSTE punkt på tegningen.");
+    window.updatePdfSettings(); // Opdaterer UI
 };
 
 window.toggleAllLabels = (checkbox) => {
@@ -77,6 +203,16 @@ window.toggleEffectsSettings = () => {
     if (content && icon) {
         content.style.display = diagramSettings.effectsSettingsExpanded ? 'block' : 'none';
         icon.innerText = diagramSettings.effectsSettingsExpanded ? '▼' : '▶';
+    }
+};
+
+window.toggleGridSettings = () => {
+    diagramSettings.gridSettingsExpanded = !diagramSettings.gridSettingsExpanded;
+    const content = document.getElementById('gridSettingsContent');
+    const icon = document.getElementById('gridSettingsIcon');
+    if (content && icon) {
+        content.style.display = diagramSettings.gridSettingsExpanded ? 'block' : 'none';
+        icon.innerText = diagramSettings.gridSettingsExpanded ? '▼' : '▶';
     }
 };
 
@@ -135,8 +271,12 @@ let currentlyHighlightedMeshes = [];
 let axesScene, axesCamera, axesRenderer;
 let labelX, labelY, labelZ;
 
+let pdfPlaneMesh = null; // Holder styr på 3D-planet med arkitekttegningen
+let pdfTextureCanvas = null; // Gemmer PDF-billedet lokalt
+
 // --- VISUEL FOKUS MODE (HOVER LOGIK) ---
-window.highlight3DComponent = (id) => {
+// --- VISUEL FOKUS MODE (HOVER & PORT LOGIK) ---
+window.highlight3DComponent = (id, port) => {
     if (!scene) return;
     window.reset3DHighlight(); 
     scene.traverse((child) => {
@@ -145,9 +285,18 @@ window.highlight3DComponent = (id) => {
             child.material = child.material.clone(); 
 
             if (String(child.userData.compId) === String(id)) {
-                child.material.emissive.setHex(0x39FF14); 
-                child.material.emissiveIntensity = 0.6;
-                child.material.transparent = false;
+                // Tjek om vi leder efter en specifik port (f.eks. på et T-stykke)
+                if (port && child.userData.port && child.userData.port !== port) {
+                    // Rigtig komponent, men FORKERT afgrening. Gør den mørkegrøn.
+                    child.material.emissive.setHex(0x114411); 
+                    child.material.emissiveIntensity = 0.5;
+                    child.material.transparent = false;
+                } else {
+                    // Den helt korrekte port (eller hele komponenten hvis port ikke er valgt)
+                    child.material.emissive.setHex(0x39FF14); // Neon grøn!
+                    child.material.emissiveIntensity = 0.8;
+                    child.material.transparent = false;
+                }
                 child.material.wireframe = false;
                 child.material.opacity = 1.0;
             } else {
@@ -267,11 +416,6 @@ export function renderDiagram(keepControls = false) {
     const components = fullState.systemComponents || getSystemComponents();
     const isExhaust = fullState.systemType === 'merging';
 
-    if (components.length === 0) {
-        container.innerHTML = '<p style="text-align:center;color:#666;">Ingen komponenter at vise i 3D.</p>';
-        return;
-    }
-
     let webglContainer = document.getElementById('diagramWebglContainer');
 
     if (!webglContainer || !renderer) {
@@ -280,8 +424,22 @@ export function renderDiagram(keepControls = false) {
         container.innerHTML = `
             <div id="diagramOverlayControls" class="diagram-overlay-container" style="position:absolute; top:10px; right:10px; z-index:100; background:rgba(0,0,0,0.8); padding:10px; border-radius:8px; border:1px solid var(--border-color); color:white; width:33%; max-width:200px; box-sizing: border-box;">
                  
-                 <button class="button secondary" style="width:100%; margin-bottom:12px; padding:6px; font-size:0.85rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.zoomAllDiagram()" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'"><i class="fas fa-expand"></i> Zoom Alt</button>
-                 
+                <!-- Zoom ALL - knap deaktiveret -->
+                 <!--  <button class="button secondary" style="width:100%; margin-bottom:12px; padding:6px; font-size:0.85rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.zoomAllDiagram()" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'"><i class="fas fa-expand"></i> Zoom Alt</button> -->
+                
+                 <!-- Kamara Viewports -->
+                 <div style="font-size: 0.75rem; font-weight: bold; margin-bottom: 6px; color: var(--text-muted-color); text-transform: uppercase; text-align: left;">Kamera (Viewports):</div>
+                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-bottom: 12px;">
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.setCameraView('top')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Top</button>
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.setCameraView('bottom')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Bottom</button>
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.setCameraView('front')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Front</button>
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.setCameraView('back')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Back</button>
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.setCameraView('left')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Left</button>
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; transition: all 0.2s;" onclick="window.setCameraView('right')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Right</button>
+                     <button class="button secondary" style="padding:4px; font-size:0.75rem; background: rgba(255,255,255,0.1); color:white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor:pointer; grid-column: span 3; transition: all 0.2s;" onclick="window.setCameraView('iso')" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">Isometrisk (3D)</button>
+                 </div>
+
+
                  <div style="font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; color: var(--text-muted-color); text-transform: uppercase; text-align: left;">Visualisering:</div>
                  <select id="diagramColorMode" class="input-field" style="width:100%;font-size:0.8rem; padding:4px; margin-bottom: 12px; background: rgba(0,0,0,0.5); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; cursor: pointer;" onchange="window.updateDiagramSettings()">
                     <option value="default" style="background: #111; color: white;" ${diagramSettings.colorMode === 'default' ? 'selected' : ''}>Standard</option>
@@ -345,6 +503,74 @@ export function renderDiagram(keepControls = false) {
                          <label style="display: flex; align-items: center; font-size: 0.75rem; cursor: pointer; color: white;">
                             <input type="checkbox" id="lbl_all" style="margin-right: 6px; cursor: pointer;" onchange="window.toggleAllLabels(this)" ${Object.values(diagramSettings.labels).every(v=>v) ? 'checked' : ''}> <strong>Vis alt</strong>
                          </label>
+                     </div>
+                 </div>
+                 <!-- Foldbar Grid settings -->
+                 <div>
+                     <div style="font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; color: var(--text-muted-color); text-transform: uppercase; cursor: pointer; display: flex; justify-content: space-between; align-items: center; padding: 2px 0; text-align: left;" onclick="window.toggleGridSettings()">
+                        <span>Grid (Gitter)</span>
+                        <span id="gridSettingsIcon">${diagramSettings.gridSettingsExpanded ? '▼' : '▶'}</span>
+                     </div>
+                     
+                     <div id="gridSettingsContent" style="background: rgba(0,0,0,0.4); padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); display: ${diagramSettings.gridSettingsExpanded ? 'block' : 'none'};">
+                         <div style="margin-bottom: 6px;">
+                             <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 2px;">Afstand mellem linjer (mm)</label>
+                             <input type="number" id="num_grid_spacing" class="input-field" step="100" style="width: 100%; font-size: 0.75rem; padding: 2px 4px; background: #222; color: white; border: 1px solid #444;" value="${diagramSettings.grid.spacingMm}" onchange="window.updateDiagramSettings()">
+                         </div>
+                         <div>
+                             <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 4px;">Kote / Y-position (mm)</label>
+                             <input type="number" id="num_grid_elevation" class="input-field" step="100" style="width: 100%; font-size: 0.75rem; padding: 2px 4px; background: #222; color: white; border: 1px solid #444;" value="${diagramSettings.grid.elevationMm}" onchange="window.updateDiagramSettings()">
+                         </div>
+                     </div>
+                     
+                 </div>
+                 <div>
+                     <div style="font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; color: var(--text-muted-color); text-transform: uppercase; cursor: pointer; display: flex; justify-content: space-between; align-items: center; padding: 2px 0; text-align: left;" onclick="window.togglePdfSettings()">
+                        <span>Baggrundstegning (PDF)</span>
+                        <span id="pdfSettingsIcon">${diagramSettings.pdfSettingsExpanded ? '▼' : '▶'}</span>
+                     </div>
+                     
+                     <div id="pdfSettingsContent" style="background: rgba(0,0,0,0.4); padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); display: ${diagramSettings.pdfSettingsExpanded ? 'block' : 'none'};">
+                         
+                         <input type="file" id="pdfFileInput" accept="application/pdf" style="display:none;" onchange="window.handlePdfUpload(event)">
+                         <button class="button primary" style="width: 100%; padding: 4px; font-size: 0.75rem; margin-bottom: 4px; border: 1px solid var(--primary-color);" onclick="document.getElementById('pdfFileInput').click()"><i class="fas fa-file-pdf"></i> Upload Plantegning</button>
+                         <div id="pdfUploadStatus" style="font-size: 0.65rem; color: #00E4FF; text-align: center; margin-bottom: 6px; font-style: italic;"></div>
+
+                         <div style="margin-bottom: 6px;">
+                             <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 2px;">Gennemsigtighed (0-1)</label>
+                             <input type="number" id="num_pdf_opacity" class="input-field" step="0.1" min="0" max="1" style="width: 100%; font-size: 0.75rem; padding: 2px 4px; background: #222; color: white; border: 1px solid #444;" value="${diagramSettings.pdfConfig.opacity}" onchange="window.updatePdfSettings()">
+                         </div>
+                         
+                         <div style="margin-bottom: 6px;">
+                             <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 2px;">Målestok (Skalering)</label>
+                             <select id="sel_pdf_scale" class="input-field" style="width: 100%; font-size: 0.75rem; padding: 2px 4px; background: #222; color: white; border: 1px solid #444; margin-bottom: 4px;" onchange="window.updatePdfSettings()">
+                                 <option value="5" ${diagramSettings.pdfConfig.scaleMode === '5' ? 'selected' : ''}>1:5</option>
+                                 <option value="10" ${diagramSettings.pdfConfig.scaleMode === '10' ? 'selected' : ''}>1:10</option>
+                                 <option value="20" ${diagramSettings.pdfConfig.scaleMode === '20' ? 'selected' : ''}>1:20</option>
+                                 <option value="50" ${diagramSettings.pdfConfig.scaleMode === '50' ? 'selected' : ''}>1:50</option>
+                                 <option value="100" ${diagramSettings.pdfConfig.scaleMode === '100' ? 'selected' : ''}>1:100</option>
+                                 <option value="200" ${diagramSettings.pdfConfig.scaleMode === '200' ? 'selected' : ''}>1:200</option>
+                                 <option value="250" ${diagramSettings.pdfConfig.scaleMode === '250' ? 'selected' : ''}>1:250</option>
+                                 <option value="300" ${diagramSettings.pdfConfig.scaleMode === '300' ? 'selected' : ''}>1:300</option>
+                                 <option value="500" ${diagramSettings.pdfConfig.scaleMode === '500' ? 'selected' : ''}>1:500</option>
+                                 <option value="custom" ${diagramSettings.pdfConfig.scaleMode === 'custom' ? 'selected' : ''}>Ukendt (Kalibrer)</option>
+                             </select>
+                             <button id="btn_pdf_calibrate" class="button secondary" style="width: 100%; padding: 4px; font-size: 0.7rem; color: white; border: 1px dashed #00A4E0; background: rgba(0, 164, 224, 0.1); display: ${diagramSettings.pdfConfig.scaleMode === 'custom' ? 'block' : 'none'};" onclick="window.startPdfCalibration()"><i class="fas fa-ruler-combined"></i> Kalibrer 2 punkter</button>
+                         </div>
+
+                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 4px;">
+                             <div>
+                                 <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 2px;">X Forskyd (mm)</label>
+                                 <input type="number" id="num_pdf_offset_x" class="input-field" step="100" style="width: 100%; font-size: 0.75rem; padding: 2px 4px; background: #222; color: white; border: 1px solid #444;" value="${Math.round(diagramSettings.pdfConfig.offsetX_mm)}" onchange="window.updatePdfSettings()">
+                             </div>
+                             <div>
+                                 <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 2px;">Z Forskyd (mm)</label>
+                                 <input type="number" id="num_pdf_offset_z" class="input-field" step="100" style="width: 100%; font-size: 0.75rem; padding: 2px 4px; background: #222; color: white; border: 1px solid #444;" value="${Math.round(diagramSettings.pdfConfig.offsetZ_mm)}" onchange="window.updatePdfSettings()">
+                             </div>
+                         </div>
+                         <button class="button secondary" style="width: 100%; padding: 4px; font-size: 0.75rem; margin-bottom: 8px; color: white; border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.1);" onclick="window.startPdfOriginPlacement()"><i class="fas fa-crosshairs"></i> Sæt Origo (Klik på kort)</button>
+                         
+                         <button class="button secondary" style="width: 100%; padding: 4px; font-size: 0.75rem; color: #ff4444; border: 1px solid rgba(255,68,68,0.3); background: transparent;" onclick="window.removePdfUnderlay()"><i class="fas fa-trash"></i> Fjern Tegning</button>
                      </div>
                  </div>
             </div>
@@ -480,6 +706,7 @@ export function renderDiagram(keepControls = false) {
             if (dx > 5 || dy > 5) isDragging = true;
         });
         
+// --- Komplet Raycaster og HUD (Defensiv Vanilla JS) ---
         canvas.addEventListener('pointerup', (e) => {
             if (isDragging) return;
 
@@ -493,45 +720,145 @@ export function renderDiagram(keepControls = false) {
 
             const intersects = raycaster.intersectObjects(scene.children, true);
 
+            // --- CAD VÆRKTØJER TIL PDF TEGNING ---
+            const cfg = diagramSettings.pdfConfig;
+            if (cfg.isSettingOrigin || cfg.calibrationState > 0) {
+                const hit = intersects.find(i => i.object.userData.isPdf);
+                if (hit && e.button === 0) {
+                    if (cfg.isSettingOrigin) {
+                        // Flyt PDF'en baglæns, så det klikkede punkt lander på (0,0)
+                        cfg.offsetX_mm -= (hit.point.x * 10);
+                        cfg.offsetZ_mm -= (hit.point.z * 10);
+                        cfg.isSettingOrigin = false;
+                        
+                        // Opdater UI-felterne direkte
+                        const elX = document.getElementById('num_pdf_offset_x');
+                        const elZ = document.getElementById('num_pdf_offset_z');
+                        if (elX) elX.value = Math.round(cfg.offsetX_mm);
+                        if (elZ) elZ.value = Math.round(cfg.offsetZ_mm);
+                        
+                        window.updatePdfSettings();
+                        return; // Stop andet klik-logik
+                    }
+                    
+                    if (cfg.calibrationState === 1) {
+                        cfg.calibPt1 = hit.point.clone();
+                        cfg.calibrationState = 2;
+                        alert("Punkt 1 gemt! Klik nu på det ANDET punkt.");
+                        return;
+                    }
+                    
+                    if (cfg.calibrationState === 2) {
+                        const pt2 = hit.point.clone();
+                        const dist3D = cfg.calibPt1.distanceTo(pt2);
+                        
+                        setTimeout(() => {
+                            const mmStr = prompt("Hvor mange millimeter (mm) er afstanden mellem de to punkter i virkeligheden?");
+                            if (mmStr) {
+                                const realMm = parseFloat(mmStr);
+                                if (!isNaN(realMm) && realMm > 0) {
+                                    const requestedDist3D = realMm / 10;
+                                    const scaleAdjustmentRatio = requestedDist3D / dist3D;
+                                    
+                                    // Ganger den eksisterende CustomScale op med det manglende forhold
+                                    cfg.customScale = cfg.customScale * scaleAdjustmentRatio;
+                                    window.updatePdfSettings();
+                                    alert("Tegningen er nu kalibreret!");
+                                }
+                            }
+                        }, 100);
+                        cfg.calibrationState = 0;
+                        return;
+                    }
+                }
+            }
+
             for (let i = 0; i < intersects.length; i++) {
                 const obj = intersects[i].object;
+                
                 if (obj.userData && obj.userData.compId != null) {
                     const compId = String(obj.userData.compId);
+                    const clickedPort = obj.userData.port; // NYT: Vi gemmer hvilken specifik sub-mesh (port) der blev ramt
                     
                     if (e.button === 0) {
-                        if (window.highlightTableRow) window.highlightTableRow(compId); 
+                        if (window.highlightTableRow) window.highlightTableRow(compId, clickedPort); 
+                        if (window.highlight3DComponent) window.highlight3DComponent(compId, clickedPort); // Tvinger venstreklik til at vise den valgte gren
                     } else if (e.button === 2 && document.body.classList.contains('desktop-mode')) {
-                        if (window.highlightTableRow) window.highlightTableRow(compId);
-                        if (window.highlight3DComponent) window.highlight3DComponent(compId);
+                        if (window.highlightTableRow) window.highlightTableRow(compId, clickedPort);
+                        if (window.highlight3DComponent) window.highlight3DComponent(compId, clickedPort);
 
                         let hudMenu = document.getElementById('hudContextMenu');
-                        if (hudMenu) hudMenu.remove(); 
+                        if (hudMenu) hudMenu.remove();
 
                         hudMenu = document.createElement('div');
                         hudMenu.id = 'hudContextMenu';
                         hudMenu.className = 'hud-context-menu'; 
                         
                         const comp = window.stateManager ? window.stateManager.getSystemComponent(compId) : { name: "Ukendt", state: {} };
-                        const velocity = comp.state?.velocity ? comp.state.velocity.toFixed(2) : '-';
-                        const pressure = comp.state?.pressureLoss ? comp.state.pressureLoss.toFixed(2) : '-';
-                        const airflow = comp.state?.airflow_in || comp.airflow || 0;
+                        
+                        // Defensiv variabeludtrækning (uden optional chaining)
+                        const velocity = (comp.state && comp.state.velocity) ? comp.state.velocity.toFixed(2) : '-';
+                        const pressure = (comp.state && comp.state.pressureLoss) ? comp.state.pressureLoss.toFixed(2) : '-';
+                        const airflow = (comp.state && comp.state.airflow_in) || comp.airflow || 0;
                         const shortId = compId.split('_')[1] || compId.substring(0,4);
 
-                        const splitBtnHtml = comp.type === 'straightDuct' 
-                            ? `<button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem; opacity: 0.3; pointer-events: none; filter: grayscale(1);">
-                                   <span>✂️</span> Split kanal
-                               </button>`
+                        const pType = comp.fittingType || (comp.properties && comp.properties.type) || comp.type || '';
+                        const isStraight = comp.type === 'straightDuct';
+                        
+                        // Split-knap
+                        const splitBtnHtml = isStraight 
+                            ? `<button class="hud-btn" onclick="window.handleSplitDuct('${compId}'); document.getElementById('hudContextMenu').remove();"><span>✂️</span> Split kanal</button>`
                             : '';
                             
                         let extraDataHtml = '';
-                        if (comp.type === 'straightDuct') {
-                            const length = comp.properties?.length ? parseFloat(comp.properties.length).toFixed(2) : '-';
-                            const dpPerMeter = comp.state?.calculationDetails?.pressureDrop ? comp.state.calculationDetails.pressureDrop.toFixed(2) : '-';
-                            
-                            extraDataHtml = `
-                                <div>Længde:</div> <span>${length} m</span>
-                                <div>Tryktab:</div> <span>${dpPerMeter} Pa/m</span>
-                            `;
+                        if (isStraight) {
+                            const length = (comp.properties && comp.properties.length) ? parseFloat(comp.properties.length).toFixed(2) : '-';
+                            const dpPerMeter = (comp.state && comp.state.calculationDetails && comp.state.calculationDetails.pressureDrop) ? comp.state.calculationDetails.pressureDrop.toFixed(2) : '-';
+                            extraDataHtml = `<div>Længde:</div> <span>${length} m</span><div>Tryktab:</div> <span>${dpPerMeter} Pa/m</span>`;
+                        }
+
+                        // Clipboard status
+                        const hasClipboard = window.clipboardBranch !== undefined && window.clipboardBranch !== null;
+                        const pasteOpacity = hasClipboard ? '1' : '0.4';
+                        const pastePointer = hasClipboard ? 'auto' : 'none';
+
+                        let addButtonsHtml = '';
+                        let pasteButtonsHtml = '';
+
+                        if (pType.startsWith('tee_')) {
+                            // Vi tjekker om brugeren ramte en udgang!
+                            if (clickedPort === 'outlet_straight' || clickedPort === 'outlet_branch' || clickedPort === 'outlet_path1' || clickedPort === 'outlet_path2') {
+                                
+                                // Bestem det danske navn for den port vi ramte
+                                let portNameDk = 'Afgrening';
+                                if (clickedPort === 'outlet_straight') portNameDk = 'Ligeud';
+                                if (clickedPort === 'outlet_path1') portNameDk = 'Gren 1';
+                                if (clickedPort === 'outlet_path2') portNameDk = 'Gren 2';
+
+                                // Hent dimensionen for at gøre det endnu lækrere
+                                const d = (comp.state && comp.state.outletDimension && comp.state.outletDimension[clickedPort]) ? comp.state.outletDimension[clickedPort] : null;
+                                const dimStr = d ? (d.shape === 'round' ? `Ø${d.d}` : `${d.w}x${d.h}`) : '';
+
+                                // Vis KUN én Tilføj-knap for præcis dén cylinder du klikkede på
+                                addButtonsHtml = `
+                                    <button class="hud-btn" style="border-color: var(--primary-neon-blue); box-shadow: 0 0 8px rgba(0, 228, 255, 0.4);" onclick="window.showAddForm('${compId}', '${clickedPort}'); document.getElementById('hudContextMenu').remove();">
+                                        <span>➕</span> Tilføj på ${portNameDk} ${dimStr}
+                                    </button>
+                                `;
+                                
+                                pasteButtonsHtml = `
+                                    <button class="hud-btn" style="opacity: ${pasteOpacity}; pointer-events: ${pastePointer};" onclick="window.handlePasteBranch('${compId}', '${clickedPort}'); document.getElementById('hudContextMenu').remove();">
+                                        <span>📋</span> Indsæt på ${portNameDk}
+                                    </button>
+                                `;
+                            } else {
+                                // Hvis de klikkede på selve "hovedrøret/indløbet" af T-stykket
+                                addButtonsHtml = `<div style="font-size: 0.75rem; color: var(--error-color); padding: 4px; text-align: center;">Klik på den specifikke<br>afgrening for at bygge videre.</div>`;
+                            }
+                        } else if (comp.type !== 'terminalUnit') { 
+                            // ... [Logik for standard lige rør og bøjninger] ...
+                            addButtonsHtml = `<button class="hud-btn" onclick="window.showAddForm('${compId}', 'outlet'); document.getElementById('hudContextMenu').remove();"><span>➕</span> Tilføj efter</button>`;
+                            pasteButtonsHtml = `<button class="hud-btn" style="opacity: ${pasteOpacity}; pointer-events: ${pastePointer};" onclick="window.handlePasteBranch('${compId}', 'outlet'); document.getElementById('hudContextMenu').remove();"><span>📋</span> Indsæt gren</button>`;
                         }
 
                         hudMenu.innerHTML = `
@@ -546,24 +873,26 @@ export function renderDiagram(keepControls = false) {
                                 <div>Total Tab:</div> <span>${pressure} Pa</span>
                             </div>
                             <div class="hud-actions" style="gap: 4px;">
-                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.showSystemComponentDetails('${compId}'); document.getElementById('hudContextMenu').remove();">
-                                    <span>ℹ️</span> Detaljer
-                                </button>
-                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.showEditForm('${compId}'); document.getElementById('hudContextMenu').remove();">
-                                    <span>✏️</span> Rediger
-                                </button>
-                                <button class="hud-btn" style="padding: 6px 10px; font-size: 0.8rem; opacity: 0.3; pointer-events: none; filter: grayscale(1);">
-                                    <span>➕</span> Tilføj
-                                </button>
+                                <button class="hud-btn" onclick="window.showSystemComponentDetails('${compId}'); document.getElementById('hudContextMenu').remove();"><span>ℹ️</span> Detaljer</button>
+                                <button class="hud-btn" onclick="window.handleEditComponent('${compId}'); document.getElementById('hudContextMenu').remove();"><span>✏️</span> Rediger</button>
+                                ${addButtonsHtml}
                                 ${splitBtnHtml}
+                                <button class="hud-btn" onclick="window.handleCopyBranch('${compId}'); document.getElementById('hudContextMenu').remove();"><span>📄</span> Kopiér gren</button>
+                                ${pasteButtonsHtml}
+                                <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 2px 0;"></div>
+                                <button class="hud-btn" style="color: #ff4444; border-color: rgba(255,68,68,0.2);" onclick="window.handleDeleteComponent('${compId}'); document.getElementById('hudContextMenu').remove();"><span>❌</span> Slet komponent</button>
                             </div>
                         `;
 
                         document.body.appendChild(hudMenu);
 
-                        hudMenu.style.left = `${e.clientX}px`;
-                        hudMenu.style.top = `${e.clientY}px`;
-                        hudMenu.style.width = '200px'; 
+                        // Positionering med skalering
+                        const scale = 0.75;
+                        let targetX = e.clientX / scale;
+                        let targetY = e.clientY / scale;
+
+                        hudMenu.style.left = `${targetX}px`;
+                        hudMenu.style.top = `${targetY}px`;
                         
                         setTimeout(() => {
                             hudMenu.classList.add('active');
@@ -623,14 +952,22 @@ export function renderDiagram(keepControls = false) {
         renderer.setSize(webglContainer.clientWidth, webglContainer.clientHeight);
     }
 
-    // RYDER OP (Husk at slette klonede teksturer)
+    // ==========================================
+    // 1. RYDDER OP I SCENEN
+    // ==========================================
     window.reset3DHighlight(); 
     for (let i = scene.children.length - 1; i >= 0; i--) {
         let obj = scene.children[i];
-        if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "ArrowHelper") {
+        
+        // --- NYT: VIP-PAS TIL PDF'EN! ---
+        // Hvis objektet er vores PDF-tegning, springer bulldozeren det over!
+        if (obj.userData && obj.userData.isPdf) continue;
+
+        if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "ArrowHelper" || obj.type === "GridHelper") {
             scene.remove(obj);
             if (obj.geometry) obj.geometry.dispose();
             if (obj.material) {
+                // Beskyt vores globale materialCache
                 if (!Object.values(materialCache).includes(obj.material)) {
                     if (obj.material.map && obj.material.map !== globalFlowTexture) obj.material.map.dispose();
                     if (obj.material.emissiveMap && obj.material.emissiveMap !== globalFlowTexture) obj.material.emissiveMap.dispose();
@@ -641,8 +978,57 @@ export function renderDiagram(keepControls = false) {
     }
 
     const labelsContainer = document.getElementById('diagramLabels');
-    labelsContainer.innerHTML = '';
-    labelsMap.clear();
+    if (labelsContainer) labelsContainer.innerHTML = '';
+    if (typeof labelsMap !== 'undefined') labelsMap.clear();
+
+    // ==========================================
+    // 2. TEGN ALTID CAD GITTER (GRID)
+    // ==========================================
+    const PIXELS_PER_METER = 100;
+    const spacing3D = (Math.max(10, diagramSettings.grid.spacingMm) / 1000) * PIXELS_PER_METER;
+    const elevation3D = (diagramSettings.grid.elevationMm / 1000) * PIXELS_PER_METER;
+    const gridSize3D = 6000;
+    const divisions = Math.floor(gridSize3D / spacing3D);
+    
+    const gridHelper = new THREE.GridHelper(gridSize3D, divisions, 0x00A4E0, 0x333333);
+    gridHelper.position.set(0, elevation3D, 0);
+    gridHelper.material.opacity = 0.4;
+    gridHelper.material.transparent = true;
+    scene.add(gridHelper);
+
+    // ==========================================
+    // 3. EMPTY STATE (Logo)
+    // ==========================================
+    if (components.length === 0) {
+        const iconGeo = new THREE.CylinderGeometry(30, 30, 60, 16);
+        const iconMat = new THREE.MeshBasicMaterial({ color: 0x00E4FF, wireframe: true, transparent: true, opacity: 0.6 });
+        const iconMesh = new THREE.Mesh(iconGeo, iconMat);
+        iconMesh.rotation.x = Math.PI / 2;
+        scene.add(iconMesh);
+
+        const div = document.createElement('div');
+        div.style.position = 'absolute';
+        div.style.color = '#00E4FF';
+        div.style.textAlign = 'center';
+        div.style.fontWeight = 'bold';
+        div.style.textShadow = '0px 0px 8px #00E4FF';
+        div.style.fontFamily = 'monospace';
+        div.style.pointerEvents = 'none';
+        div.innerHTML = '<span style="font-size: 1.2rem;">VentCalculatorADV</span><br><span style="font-size: 0.8rem; color: #aaa;">Venter på startkomponent...</span>';
+        if (labelsContainer) labelsContainer.appendChild(div);
+        labelsMap.set(div, new THREE.Vector3(0, 50, 0));
+
+        if (camera && controls) {
+            controls.target.set(0, 0, 0);
+            camera.position.set(150, 150, 150);
+            camera.lookAt(0, 0, 0);
+            controls.update();
+        }
+
+        if (renderer && camera) renderer.render(scene, camera);
+        
+        return; // Afbryd funktionen her - der er ingen rør at tegne
+    }
 
     let maxV = -Infinity, minV = Infinity, maxP = -Infinity, minP = Infinity, maxT = -Infinity, minT = Infinity;
     components.forEach(c => {
@@ -792,7 +1178,6 @@ export function renderDiagram(keepControls = false) {
         return materialCache[key];
     };
 
-    const PIXELS_PER_METER = 100;
     let bMin = new THREE.Vector3(Infinity, Infinity, Infinity);
     let bMax = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
 
@@ -939,6 +1324,9 @@ export function renderDiagram(keepControls = false) {
             const angleDeg = comp.properties?.angle || 90;
             const turnRad = THREE.MathUtils.degToRad(angleDeg);
 
+            // =========================================================
+            // THE UNIVERSAL ROTATION CORE (Virker på alle komponenter!)
+            // =========================================================
             const orientation = comp.properties?.orientation || 'Left';
             const rightDir = currentDir.clone().cross(nextUp).normalize();
             let axis = nextUp.clone();
@@ -948,6 +1336,16 @@ export function renderDiagram(keepControls = false) {
             else if (orientation === 'Right') { axis = nextUp.clone(); turnSign = -1; }
             else if (orientation === 'Up') { axis = rightDir.clone(); turnSign = 1; }
             else if (orientation === 'Down') { axis = rightDir.clone(); turnSign = -1; }
+            else if (orientation === 'Custom' || orientation === 'Andet') {
+                // Frie Grader: Vi drejer "Op" vektoren som en tønde rundt om røret
+                const customAngleRad = THREE.MathUtils.degToRad(parseFloat(comp.properties?.orientationAngle || 0));
+                const turnTowards = nextUp.clone().applyAxisAngle(currentDir, customAngleRad).normalize();
+                
+                // Beregn den perfekte omdrejningsakse med et krydsprodukt
+                axis = currentDir.clone().cross(turnTowards).normalize();
+                turnSign = -1;
+            }
+            // =========================================================
 
             nextDir.applyAxisAngle(axis, turnRad * turnSign).normalize();
             nextUp.applyAxisAngle(axis, turnRad * turnSign).normalize();
@@ -1057,9 +1455,12 @@ export function renderDiagram(keepControls = false) {
             nextPos.add(currentDir.clone().multiplyScalar(moveDist));
             midWay.copy(currentPos).add(currentDir.clone().multiplyScalar(moveDist / 2));
         }
-        else if (pType.includes('tee')) {
+else if (pType.includes('tee')) {
             const isBullhead = pType === 'tee_bullhead';
             
+            // =========================================================
+            // THE UNIVERSAL ROTATION CORE
+            // =========================================================
             const orientation = comp.properties?.orientation || 'Left';
             const rightDir = currentDir.clone().cross(nextUp).normalize();
             let axis = nextUp.clone();
@@ -1069,6 +1470,13 @@ export function renderDiagram(keepControls = false) {
             else if (orientation === 'Right') { axis = nextUp.clone(); turnSign = -1; }
             else if (orientation === 'Up') { axis = rightDir.clone(); turnSign = 1; }
             else if (orientation === 'Down') { axis = rightDir.clone(); turnSign = -1; }
+            else if (orientation === 'Custom' || orientation === 'Andet') {
+                const customAngleRad = THREE.MathUtils.degToRad(parseFloat(comp.properties?.orientationAngle || 0));
+                const turnTowards = nextUp.clone().applyAxisAngle(currentDir, customAngleRad).normalize();
+                axis = currentDir.clone().cross(turnTowards).normalize();
+                turnSign = -1;
+            }
+            // =========================================================
 
             const branchTurn = THREE.MathUtils.degToRad(90);
 
@@ -1080,53 +1488,53 @@ export function renderDiagram(keepControls = false) {
                 moveDist = Math.max(dIn * 2, 60);
                 const stubLen = moveDist / 2;
 
+                // --- Indløb (Bullhead) ---
                 let gIn = new THREE.CylinderGeometry(dIn/2, dIn/2, stubLen, 32);
                 gIn.translate(0, stubLen/2, 0);
                 gIn.rotateX(Math.PI/2);
                 const meshIn = new THREE.Mesh(gIn, material);
-                meshIn.userData.compId = comp.id;
+                meshIn.userData = { compId: comp.id, port: 'inlet' }; // RETTET: "drawTree3D" fjernet og port tilføjet
                 meshIn.position.copy(currentPos);
                 meshIn.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
                 scene.add(meshIn);
                 
-                // Isolering Indløb
-                addInsulation(meshIn, 'straight_cyl', {r: dIn/2, len: stubLen});
+                if (!isRect) addInsulation(meshIn, 'straight_cyl', {r: dIn/2, len: stubLen});
 
                 const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
 
-                const path1Dir = currentDir.clone().applyAxisAngle(axis, branchTurn).normalize();
-                const path1Up = nextUp.clone().applyAxisAngle(axis, branchTurn).normalize();
+                const path1Dir = currentDir.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
+                const path1Up = nextUp.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
                 
-                const path2Dir = currentDir.clone().applyAxisAngle(axis, -branchTurn).normalize();
-                const path2Up = nextUp.clone().applyAxisAngle(axis, -branchTurn).normalize();
+                const path2Dir = currentDir.clone().applyAxisAngle(axis, -branchTurn * turnSign).normalize();
+                const path2Up = nextUp.clone().applyAxisAngle(axis, -branchTurn * turnSign).normalize();
 
+                // --- Udløb 1 (Gren 1) ---
                 let gB1 = new THREE.CylinderGeometry(dOut1/2, dOut1/2, stubLen, 32);
                 gB1.translate(0, stubLen/2, 0);
                 gB1.rotateX(Math.PI/2);
                 const meshB1 = new THREE.Mesh(gB1, material);
-                meshB1.userData.compId = comp.id;
+                meshB1.userData = { compId: comp.id, port: 'outlet_path1' };
                 meshB1.position.copy(midPos);
                 meshB1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path1Dir);
                 scene.add(meshB1);
                 
-                // Isolering Udløb 1
-                addInsulation(meshB1, 'straight_cyl', {r: dOut1/2, len: stubLen});
+                if (!isRect) addInsulation(meshB1, 'straight_cyl', {r: dOut1/2, len: stubLen});
 
+                // --- Udløb 2 (Gren 2) ---
                 let gB2 = new THREE.CylinderGeometry(dOut2/2, dOut2/2, stubLen, 32);
                 gB2.translate(0, stubLen/2, 0);
                 gB2.rotateX(Math.PI/2);
                 const meshB2 = new THREE.Mesh(gB2, material);
-                meshB2.userData.compId = comp.id;
+                meshB2.userData = { compId: comp.id, port: 'outlet_path2' };
                 meshB2.position.copy(midPos);
                 meshB2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path2Dir);
                 scene.add(meshB2);
                 
-                // Isolering Udløb 2
-                addInsulation(meshB2, 'straight_cyl', {r: dOut2/2, len: stubLen});
+                if (!isRect) addInsulation(meshB2, 'straight_cyl', {r: dOut2/2, len: stubLen});
 
                 midWay.copy(midPos);
 
-                const drawOpenEnd = (pos, dir, portName) => {
+                const drawOpenEnd = (pos, dir, portName = null) => {
                     const arrowLength = 50;
                     const arrowDir = isExhaust ? dir.clone().negate() : dir;
                     const arrowPos = isExhaust ? pos.clone().add(dir.clone().multiplyScalar(arrowLength)) : pos;
@@ -1134,11 +1542,23 @@ export function renderDiagram(keepControls = false) {
                     const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowPos, arrowLength, 0x00E4FF, 15, 10);
                     scene.add(arrowHelper);
 
-                    const outFlow = comp.state?.airflow_out?.[portName] || 0;
+                    let outFlow = 0;
+                    if (portName && comp.state?.airflow_out) {
+                        outFlow = comp.state.airflow_out[portName];
+                    } else {
+                        outFlow = comp.state?.airflow_out?.outlet || comp.state?.airflow_out?.outlet_straight || comp.state?.airflow_out?.outlet_branch || comp.state?.airflow_in || 0;
+                    }
+
                     const flow = Math.round(outFlow);
-                    
-                    const tOutRaw = comp.state?.temperature_out?.[portName] || comp.state?.temperature_in || 20;
+
+                    let tOutRaw = 20;
+                    if (portName && comp.state?.temperature_out) {
+                        tOutRaw = comp.state.temperature_out[portName];
+                    } else {
+                        tOutRaw = comp.state?.temperature_out?.outlet || comp.state?.temperature_out?.outlet_straight || comp.state?.temperature_in || 20;
+                    }
                     const temp = parseFloat(tOutRaw);
+
                     const endText = isExhaust ? 'Udsugning' : 'Indblæsning';
                     const safePortName = portName || 'outlet';
 
@@ -1155,7 +1575,8 @@ export function renderDiagram(keepControls = false) {
                     div.style.pointerEvents = 'none';
                     div.style.textAlign = 'center';
                     
-                    const addButtonHtml = isDesktop 
+                    const isTerminal = comp.type === 'terminalUnit';
+                    const addButtonHtml = (isDesktop && !isTerminal) 
                         ? `<br><button class="add-btn-3d" 
                                 style="pointer-events: auto; cursor: pointer; margin-top: 6px; padding: 4px 8px; font-size: 14px; background: #00A4E0; color: #fff; border: none; border-radius: 4px; font-weight: bold; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;" 
                                 onpointerdown="event.stopPropagation();"
@@ -1192,6 +1613,7 @@ export function renderDiagram(keepControls = false) {
                 bMax.max(currentPos); bMax.max(end1Pos); bMax.max(end2Pos);
                 return;
             } else {
+                // --- STANDARD T-STYKKE ---
                 branchDir = currentDir.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
                 branchUp = nextUp.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
 
@@ -1202,6 +1624,7 @@ export function renderDiagram(keepControls = false) {
                 const branchHeight = ((comp.properties?.h_branch || heightMm) / 1000) * PIXELS_PER_METER;
                 const isBranchRect = comp.properties?.w_branch !== undefined || (isRect && comp.properties?.d_branch === undefined);
 
+                // --- Udløb (Ligeud) ---
                 let gS;
                 if (isRect) {
                     gS = new THREE.BoxGeometry(width3D, moveDist, height3D);
@@ -1211,15 +1634,15 @@ export function renderDiagram(keepControls = false) {
                 gS.translate(0, moveDist / 2, 0);
                 gS.rotateX(Math.PI / 2);
                 const meshS = new THREE.Mesh(gS, material);
-                meshS.userData.compId = comp.id;
+                meshS.userData = { compId: comp.id, port: 'outlet_straight' }; // RETTET: Ren port tildeling
                 meshS.position.copy(currentPos);
                 meshS.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
                 scene.add(meshS);
                 
-                // Isolering Ligeud
                 if (isRect) addInsulation(meshS, 'straight_box', {w: width3D, h: height3D, len: moveDist});
                 else addInsulation(meshS, 'straight_cyl', {r: radius3D, len: moveDist});
 
+                // --- Udløb (Afgrening) ---
                 const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
                 let gB;
                 if (isBranchRect) {
@@ -1230,12 +1653,11 @@ export function renderDiagram(keepControls = false) {
                 gB.translate(0, stubLen / 2, 0);
                 gB.rotateX(Math.PI / 2);
                 const meshB = new THREE.Mesh(gB, material);
-                meshB.userData.compId = comp.id;
+                meshB.userData = { compId: comp.id, port: 'outlet_branch' }; // RETTET: Ren port tildeling, mesh findes nu
                 meshB.position.copy(midPos);
                 meshB.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), branchDir);
                 scene.add(meshB);
                 
-                // Isolering Afgrening
                 if (isBranchRect) addInsulation(meshB, 'straight_box', {w: branchWidth, h: branchHeight, len: stubLen});
                 else addInsulation(meshB, 'straight_cyl', {r: branchRadius, len: stubLen});
 
@@ -1243,6 +1665,7 @@ export function renderDiagram(keepControls = false) {
                 midWay.copy(midPos);
             }
         }
+
         else {
             moveDist = Math.max(radius3D * 2, 40);
             const g = new THREE.BoxGeometry(radius3D * 2, radius3D * 2, moveDist);
@@ -1369,7 +1792,9 @@ export function renderDiagram(keepControls = false) {
                 div.style.pointerEvents = 'none';
                 div.style.textAlign = 'center';
                 
-                const addButtonHtml = isDesktop 
+                const isTerminal = comp.type === 'terminalUnit' || (comp.properties && comp.properties.type === 'terminalUnit');
+                
+                const addButtonHtml = (isDesktop && !isTerminal) 
                     ? `<br><button class="add-btn-3d" 
                             style="pointer-events: auto; cursor: pointer; margin-top: 6px; padding: 4px 8px; font-size: 14px; background: #00A4E0; color: #fff; border: none; border-radius: 4px; font-weight: bold; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;" 
                             onpointerdown="event.stopPropagation();"
@@ -1378,7 +1803,7 @@ export function renderDiagram(keepControls = false) {
                         +
                     </button>`
                     : '';
-                
+                    
                 let endTextLines = [endText];
                 if (diagramSettings.labels.flow) endTextLines.push(`${flow} m³/h`);
                 if (diagramSettings.labels.temp) endTextLines.push(`${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`);
@@ -1404,8 +1829,14 @@ export function renderDiagram(keepControls = false) {
                 else drawOpenEnd(branchStart, branchDir, 'outlet_branch');
             } else {
                 const c = comp.children && comp.children.outlet && comp.children.outlet[0];
-                if (c) drawTree3D(c, nextPos, nextDir, nextUp);
-                else drawOpenEnd(nextPos, nextDir);
+                if (c) {
+                    drawTree3D(c, nextPos, nextDir, nextUp);
+                } else {
+                    // --- Kald ALTID drawOpenEnd for at få skiltet med data ---
+                    // Men send flaget isTerminal med, hvis det er et armatur
+                    const isTerminal = comp.type === 'terminalUnit';
+                    drawOpenEnd(nextPos, nextDir, 'outlet', isTerminal);
+                }
             }
         }
     }
@@ -1550,3 +1981,206 @@ export function zoomAllDiagram() {
     controls.update();
 }
 window.zoomAllDiagram = zoomAllDiagram;
+
+// --- Rydning af 3D Scenen (Ingen DOM-ødelæggelse) ---
+window.clear3DScene = () => {
+    if (!scene) return; // Motoren har aldrig været startet, intet at rydde
+
+    // 1. Nulstil eventuelle markeringer
+    if (typeof window.reset3DHighlight === 'function') window.reset3DHighlight(); 
+
+    // 2. Støvsug scenen for fysiske objekter
+    for (let i = scene.children.length - 1; i >= 0; i--) {
+        let obj = scene.children[i];
+        
+        // --- NYT: VIP-PAS TIL PDF'EN! ---
+        if (obj.userData && obj.userData.isPdf) continue;
+
+        if (obj.type === "Mesh" || obj.type === "Line" || obj.type === "Group" || obj.type === "ArrowHelper") {
+            scene.remove(obj);
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) {
+                // Beskyt vores globale materialCache
+                if (!Object.values(materialCache).includes(obj.material)) {
+                    if (obj.material.map && obj.material.map !== globalFlowTexture) obj.material.map.dispose();
+                    if (obj.material.emissiveMap && obj.material.emissiveMap !== globalFlowTexture) obj.material.emissiveMap.dispose();
+                    obj.material.dispose();
+                }
+            }
+        }
+    }
+
+    // 3. Ryd HTML-labels (teksterne i 3D rummet)
+    const labelsContainer = document.getElementById('diagramLabels');
+    if (labelsContainer) labelsContainer.innerHTML = '';
+    if (typeof labelsMap !== 'undefined' && labelsMap.clear) labelsMap.clear();
+
+    // 4. Render et enkelt, tomt frame så skærmen bliver sort/tom
+    if (renderer && camera) {
+        renderer.render(scene, camera);
+    }
+    
+    console.log("[WebGL] Scenen er støvsuget (PDF er bevaret).");
+};
+
+// ==========================================
+// CAD VIEWPORTS (KAMERA KONTROL)
+// ==========================================
+window.setCameraView = function(view) {
+    if (!camera || !controls || !scene) return;
+
+    // Find systemets bounding box (så vi ved, hvor stort det er, og hvor midten er)
+    const box = new THREE.Box3();
+    scene.traverse((child) => {
+        if (child.isMesh && child.userData && child.userData.compId != null) {
+            box.expandByObject(child);
+        }
+    });
+
+    if (box.isEmpty()) return;
+
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    
+    // Find den største dimension for at regne afstanden ud
+    const maxDim = Math.max(size.x, size.y, size.z, 500);
+    
+    // Brug trigonometri til at placere kameraet præcist, så alt er i billedet (FOV)
+    const fovY = camera.fov * (Math.PI / 180);
+    const dist = (maxDim / 2) / Math.tan(fovY / 2) * 1.5; 
+
+    controls.target.copy(center);
+
+    // Standard "Op" retning for kameraet
+    camera.up.set(0, 1, 0);
+
+    // Snap kameraet til de rigtige akser
+    switch(view) {
+        case 'top': 
+            camera.position.set(center.x, center.y + dist, center.z); 
+            // Fix Gimbal Lock: Når vi kigger direkte ned, skal toppen af skærmen pege mod -Z
+            camera.up.set(0, 0, -1); 
+            break;
+        case 'bottom': 
+            camera.position.set(center.x, center.y - dist, center.z); 
+            camera.up.set(0, 0, 1); 
+            break;
+        case 'front': 
+            camera.position.set(center.x, center.y, center.z + dist); 
+            break;
+        case 'back': 
+            camera.position.set(center.x, center.y, center.z - dist); 
+            break;
+        case 'left': 
+            camera.position.set(center.x - dist, center.y, center.z); 
+            break;
+        case 'right': 
+            camera.position.set(center.x + dist, center.y, center.z); 
+            break;
+        case 'iso': 
+            // Klassisk Isometrisk vinkel (skråt oppefra)
+            camera.position.set(center.x + dist*0.8, center.y + dist*0.8, center.z + dist*0.8); 
+            break;
+    }
+
+    camera.lookAt(center);
+    controls.update();
+};
+
+// ==========================================
+// KLISTER PDF PLANTEGNING I 3D
+// ==========================================
+
+// Den magiske formel der omregner PDF pixels (ved scale 3.0 og 72 DPI) til vores 3D rum
+const PDF_TO_3D_FACTOR = (1/3) * (25.4/72) * 0.1;
+
+window.applyPdfUnderlay = function(canvas) {
+    if (!scene) return;
+    if (pdfPlaneMesh) {
+        scene.remove(pdfPlaneMesh);
+        if (pdfPlaneMesh.material.map) pdfPlaneMesh.material.map.dispose();
+        pdfPlaneMesh.material.dispose();
+        pdfPlaneMesh.geometry.dispose();
+        pdfPlaneMesh = null;
+    }
+    if (!canvas) {
+        pdfTextureCanvas = null;
+        if (renderer && camera) renderer.render(scene, camera);
+        return;
+    }
+    pdfTextureCanvas = canvas;
+    const cfg = diagramSettings.pdfConfig;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.anisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 16;
+    texture.colorSpace = THREE.SRGBColorSpace;
+
+    const material = new THREE.MeshBasicMaterial({ 
+        map: texture, transparent: true, opacity: cfg.opacity, side: THREE.DoubleSide, depthWrite: false 
+    });
+
+    // Start ud med den aktuelle scale (standard 1:100)
+    let activeScale = cfg.scaleMode === 'custom' ? cfg.customScale : parseFloat(cfg.scaleMode);
+    let width3D = canvas.width * PDF_TO_3D_FACTOR * activeScale;
+    let height3D = canvas.height * PDF_TO_3D_FACTOR * activeScale;
+
+    const planeGeo = new THREE.PlaneGeometry(width3D, height3D);
+    pdfPlaneMesh = new THREE.Mesh(planeGeo, material);
+    pdfPlaneMesh.userData = { isPdf: true }; // VIGTIGT: Gør den klikbar for vores værktøjer
+    pdfPlaneMesh.rotation.x = -Math.PI / 2;
+    
+    const elevation3D = (diagramSettings.grid.elevationMm / 1000) * 100; 
+    pdfPlaneMesh.position.set(cfg.offsetX_mm / 10, elevation3D - 1, cfg.offsetZ_mm / 10); 
+    scene.add(pdfPlaneMesh);
+    if (renderer && camera) renderer.render(scene, camera);
+};
+
+// ==========================================
+// KAN KALDES FRA UI.JS FOR AT TAGE ET BILLEDE
+// ==========================================
+window.getDiagramSnapshot = () => {
+    if (typeof renderer !== 'undefined' && scene && camera) {
+        // Tving et render-frame, så vi ikke får et sort billede
+        renderer.render(scene, camera);
+        // Hent canvas som et PNG-billede
+        return renderer.domElement.toDataURL('image/png', 1.0);
+    }
+    return '';
+};
+
+// ==========================================
+// GEM OG HENT INDSTILLINGER (BRO TIL JSON)
+// ==========================================
+window.getDiagramSettings = () => {
+    return diagramSettings;
+};
+
+window.applyDiagramSettings = async (saved) => {
+    if (!saved) return;
+    
+    if (saved.grid) diagramSettings.grid = { ...diagramSettings.grid, ...saved.grid };
+    if (saved.pdfConfig) diagramSettings.pdfConfig = { ...diagramSettings.pdfConfig, ...saved.pdfConfig };
+    
+    const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    setVal('num_grid_spacing', diagramSettings.grid.spacingMm);
+    setVal('num_grid_elevation', diagramSettings.grid.elevationMm);
+    setVal('num_pdf_opacity', diagramSettings.pdfConfig.opacity);
+    setVal('sel_pdf_scale', diagramSettings.pdfConfig.scaleMode);
+    setVal('num_pdf_offset_x', Math.round(diagramSettings.pdfConfig.offsetX_mm));
+    setVal('num_pdf_offset_z', Math.round(diagramSettings.pdfConfig.offsetZ_mm));
+
+    // GENOPLIV PDF fra filens data
+    if (diagramSettings.pdfConfig.pdfData && diagramSettings.pdfConfig.active) {
+        try {
+            const res = await fetch(diagramSettings.pdfConfig.pdfData);
+            const blob = await res.blob();
+            const canvas = await renderPdfToCanvas(blob);
+            window.applyPdfUnderlay(canvas);
+        } catch (err) {
+            console.error("Kunne ikke gendanne PDF fra fil:", err);
+        }
+    } else {
+        window.applyPdfUnderlay(null);
+    }
+    
+    if (typeof window.renderDiagram === 'function') window.renderDiagram(true);
+};

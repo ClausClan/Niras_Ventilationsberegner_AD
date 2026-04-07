@@ -52,6 +52,16 @@ window.clearTableHighlights = function() {
     });
 };
 
+// ==========================================
+// UI KONTROL: Frie Grader Toggle
+// ==========================================
+window.toggleCustomAngleField = (val, suffix = '') => {
+    const container = document.getElementById('customAngleContainer' + suffix);
+    if (container) {
+        container.style.display = (val === 'Custom' || val === 'Andet') ? 'block' : 'none';
+    }
+};
+
 
 // --- 3D CONTEXT MENU (HUD / HOLOGRAM) ---
 window.show3DContextMenu = function(compId, mouseX, mouseY) {
@@ -332,11 +342,10 @@ export function getSystemFormHtml() {
                             <button type="button" class="system-menu-btn" onclick="window.toggleSystemMenu()">&#8942;</button>
                             <div id="systemMenu" class="system-menu-dropdown hidden">
                                 <button type="button" id="btnMenuNew" class="menu-item-btn">Ny beregning</button>
-                                <button type="button" id="btnMenuLoad" class="menu-item-btn">Hent projekt...</button>
-                                <button type="button" id="btnMenuSaveAs" class="menu-item-btn">Gem som (projekt)...</button>
                                 <hr style="margin: 5px 0; border: 0; border-top: 1px solid var(--border-color);">
                                 <button type="button" id="btnMenuSaveFile" class="menu-item-btn">Gem fil (JSON)...</button>
                                 <button type="button" id="btnMenuLoadFile" class="menu-item-btn">Hent fil (JSON)...</button>
+                                <hr style="margin: 5px 0; border: 0; border-top: 1px solid var(--border-color);">
                                 <button type="button" id="btnMenuPrint" class="menu-item-btn">Skriv ud dokumentation...</button>
                             </div>
                         </div>
@@ -347,14 +356,28 @@ export function getSystemFormHtml() {
                         <input type="text" id="projectName" class="input-field" placeholder="f.eks. Ombygning af kontor, etage 3">
                     </div>
                     
-                    <div class="input-group">
+                    <!-- GLOBAL SYSTEM INDSTILLINGER (Trin 8 Flex Container) -->
+                    <div style="display: flex; gap: 20px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 15px;">
+                        
+                        <!-- Eksisterende Systemtype -->
+                        <div class="input-group" style="margin-bottom: 0;">
                             <label>Systemtype</label>
                             <div id="globalSystemTypeGroup" class="radio-group"> 
-                                <input type="radio" id="sysTypeSupply" name="systemFlowType" value="splitting" checked><label for="sysTypeSupply">Indblæsning</label> 
-                                <input type="radio" id="sysTypeExhaust" name="systemFlowType" value="merging"><label for="sysTypeExhaust">Udsugning</label> 
+                                <input type="radio" id="sysTypeSupply" name="systemFlowType" value="splitting" checked onchange="window.handleSystemDirectionChange(this.value)"><label for="sysTypeSupply">Indblæsning</label> 
+                                <input type="radio" id="sysTypeExhaust" name="systemFlowType" value="merging" onchange="window.handleSystemDirectionChange(this.value)"><label for="sysTypeExhaust">Udsugning</label> 
                             </div>
+                        </div>
+
+                        <!-- Arbejdsmetode (Top-Down / Bottom-Up) -->
+                        <div class="input-group" style="margin-bottom: 0;">
+                            <label>Arbejdsmetode</label>
+                            <div id="globalCalcModeGroup" class="radio-group"> 
+                                <input type="radio" id="calcModeTopDown" name="calculationMode" value="top-down" checked onchange="window.toggleCalculationMode(this.value)"><label for="calcModeTopDown">Top-Down (Anlæg)</label> 
+                                <input type="radio" id="calcModeBottomUp" name="calculationMode" value="bottom-up" onchange="window.toggleCalculationMode(this.value)"><label for="calcModeBottomUp">Bottom-Up (Armatur)</label> 
+                            </div>
+                        </div>
+                        
                     </div>
-                    
                     <div class="input-group">
                             <label for="system_airflow">Start luftmængde</label>
                             <div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="system_airflow" class="input-field" required></div>
@@ -432,32 +455,37 @@ export function renderSystem() {
     totalPressureDropContainer.innerHTML = '';
 
     const airflowInput = document.getElementById('system_airflow');
-    const systemTypeRadios = document.getElementsByName('systemFlowType');
+    const systemTypeRadios = document.querySelectorAll('input[name="systemFlowType"]');
     const systemTypeGroup = document.getElementById('globalSystemTypeGroup');
 
-    if (flatComponents.length > 0) {
-        airflowInput.disabled = true;
-        systemTypeRadios.forEach(radio => radio.disabled = true);
-        if (systemTypeGroup) systemTypeGroup.classList.add('disabled');
-    } else {
-        airflowInput.disabled = false;
-        systemTypeRadios.forEach(radio => radio.disabled = false);
-        if (systemTypeGroup) systemTypeGroup.classList.remove('disabled');
+    // --- REN KODE: Logik til låsning af inputs baseret på State ---
+    const isBottomUp = window.stateManager && window.stateManager.state.calculationMode === 'bottom-up';
+    const hasComponents = flatComponents.length > 0;
+    
+    // I Top-Down låses input for systemtype, når der er komponenter. 
+    // I Bottom-Up forbliver radio-knapperne altid åbne, så flowretningen/armaturerne kan synkroniseres.
+    const shouldLockSystemType = hasComponents && !isBottomUp;
+    
+    // Startflow er låst i Bottom-Up (da det regnes baglæns fra armaturer), 
+    // eller hvis der er tilføjet komponenter i Top-Down.
+    const shouldLockAirflow = isBottomUp || hasComponents;
+
+    if (airflowInput) airflowInput.disabled = shouldLockAirflow;
+    
+    systemTypeRadios.forEach(radio => radio.disabled = shouldLockSystemType);
+    if (systemTypeGroup) {
+        if (shouldLockSystemType) systemTypeGroup.classList.add('disabled');
+        else systemTypeGroup.classList.remove('disabled');
     }
 
-    if (flatComponents.length === 0) {
+    if (hasComponents === false) {
         const selectedType = document.querySelector('input[name="systemFlowType"]:checked')?.value || 'splitting';
-        let noteText = '';
-        if (selectedType === 'splitting') {
-            noteText = 'Systemet er tomt. Start ved anlægget og arbejd dig <strong>ud</strong> mod de yderste grene.';
-        } else { 
-            noteText = 'Systemet er tomt. Start ved den yderste gren og arbejd dig <strong>ind</strong> mod anlægget.';
-        }
+        let noteText = selectedType === 'splitting' 
+            ? 'Systemet er tomt. Start ved anlægget og arbejd dig <strong>ud</strong> mod de yderste grene.'
+            : 'Systemet er tomt. Start ved den yderste gren og arbejd dig <strong>ind</strong> mod anlægget.';
         
-        // Hent den valgte retning fra stateManager
         const startDir = window.stateManager && window.stateManager.state ? window.stateManager.state.startDirection || 'Right' : 'Right';
 
-        // Hjælpefunktion til at style knapperne dynamisk (Neon glow hvis valgt)
         const getArrowStyle = (dir) => {
             if (startDir === dir) {
                 return `border: 1px solid var(--primary-neon-blue); box-shadow: inset 0 0 10px rgba(0, 228, 255, 0.4); background: rgba(0, 228, 255, 0.1); font-size: 1.5rem; width: 45px; height: 45px; border-radius: 8px; cursor: pointer; transition: all 0.2s;`;
@@ -681,6 +709,9 @@ export function renderSystem() {
             } else {
                 expectedPorts = ['outlet_branch', 'outlet_straight'];
             }
+        } else if (c.type === 'terminalUnit') {
+            // --- Armaturer har INGEN udgange (Leaf nodes) ---
+            expectedPorts = [];
         }
 
         // Hvis grenen er klappet sammen, springer vi over at tegne dens børn (og dens "Tilføj"-knapper)
@@ -985,7 +1016,11 @@ export function toggleSystemMenu() {
 
 export function printDocumentation(event) {
     if (event) event.preventDefault();
-    toggleSystemMenu();
+    
+    if (typeof window.toggleSystemMenu === 'function') {
+        const menu = document.getElementById('systemMenuModal');
+        if (menu && !menu.classList.contains('hidden')) window.toggleSystemMenu();
+    }
 
     const systemTree = window.stateManager ? window.stateManager.getSystemTree() : [];
     
@@ -994,55 +1029,82 @@ export function printDocumentation(event) {
         return;
     }
 
+    // ==========================================
+    // 1. Tag et billede af 3D diagrammet
+    // ==========================================
+    let diagramImage = '';
+    if (typeof window.getDiagramSnapshot === 'function') {
+        diagramImage = window.getDiagramSnapshot();
+    }
+
+    // ==========================================
+    // 2. PATHFINDER: Find Kritisk Vej OG husk ruten!
+    // ==========================================
     function calculateCriticalPath(node) {
-        if (!node || node.isIncluded === false) return { loss: 0 };
+        if (!node || node.isIncluded === false) return { loss: 0, path: [] };
+        
         const pType = node.fittingType || (node.properties && node.properties.type) || node.type || '';
         const isTee = pType.startsWith('tee_');
         const pLoss = (node.state && node.state.pressureLoss) ? node.state.pressureLoss : 0;
+        
         let maxPathLoss = 0;
+        let bestPath = []; // NYT: Husker hvilken gren der gav det højeste tab
 
         if (isTee) {
-            // Check branch first, then straight to match display order
             const ports = ['outlet_branch', 'outlet_straight', 'outlet_path1', 'outlet_path2'];
             ports.forEach(port => {
                 let portLoss = (node.state && node.state.portPressureLoss && node.state.portPressureLoss[port] !== undefined) ? node.state.portPressureLoss[port] : 0;
                 let childLoss = 0;
+                let childPath = [];
+                
                 if (node.children && node.children[port] && node.children[port].length > 0) {
-                    childLoss = calculateCriticalPath(node.children[port][0]).loss;
+                    const childResult = calculateCriticalPath(node.children[port][0]);
+                    childLoss = childResult.loss;
+                    childPath = childResult.path;
                 }
-                if (portLoss + childLoss > maxPathLoss) maxPathLoss = portLoss + childLoss;
+                
+                if (portLoss + childLoss > maxPathLoss) {
+                    maxPathLoss = portLoss + childLoss;
+                    bestPath = childPath;
+                }
             });
-            return { loss: maxPathLoss };
+            // Returnerer T-stykket + resten af den hårdeste vej
+            return { loss: maxPathLoss, path: [node, ...bestPath] }; 
         } else {
             if (node.children) {
                 Object.values(node.children).forEach(childArray => {
                     childArray.forEach(child => {
-                        let childLoss = calculateCriticalPath(child).loss;
-                        if (childLoss > maxPathLoss) maxPathLoss = childLoss;
+                        const childResult = calculateCriticalPath(child);
+                        if (childResult.loss > maxPathLoss) {
+                            maxPathLoss = childResult.loss;
+                            bestPath = childResult.path;
+                        }
                     });
                 });
             }
-            return { loss: pLoss + maxPathLoss };
+            return { loss: pLoss + maxPathLoss, path: [node, ...bestPath] };
         }
     }
 
     const criticalResult = calculateCriticalPath(systemTree[0]);
     const globalCriticalPressureDrop = criticalResult.loss;
+    const criticalPathNodes = criticalResult.path;
 
-    let tableRows = '';
-    function traversePrint(c, depth, labelPath, numPrefix = "", numCounter = 1) {
-        const currentNum = numPrefix ? `${numPrefix}.${numCounter}` : `${numCounter}`;
+    // ==========================================
+    // 3. HJÆLPEFUNKTION: Byg en HTML-række (DRY-princip)
+    // ==========================================
+    function buildRowHtml(c, depth, labelPath, currentNum, isCritical = false) {
         const state = c.state || {};
         const props = c.properties || {};
         const data = state.calculationDetails || {};
+        const pType = c.fittingType || props.type || c.type || '';
         
         const pressureLoss = state.pressureLoss || 0;
         const velocity = state.velocity ? formatLocalFloat(state.velocity, 2) : '-';
-
         let airflowIn = state.airflow_in || c.airflow || 0;
         let airflowOutText = '-';
-        const pType = c.fittingType || props.type || c.type || '';
 
+        // Beregn Ud-Flow tekst (Afgreninger etc.)
         if (pType.startsWith('tee_')) {
             const isBullhead = pType === 'tee_bullhead';
             if (props.flowType === 'merging') {
@@ -1062,28 +1124,20 @@ export function printDocumentation(event) {
             airflowOutText = state.airflow_out ? formatLocalFloat(state.airflow_out['outlet'] || airflowIn, 0) : formatLocalFloat(airflowIn, 0);
         }
 
+        // Temperatur
         let tIn = parseFloat(state.temperature_in);
         let tOutRaw = state.temperature_out ? 
             (state.temperature_out['outlet'] !== undefined ? state.temperature_out['outlet'] : 
              (state.temperature_out['outlet_straight'] !== undefined ? state.temperature_out['outlet_straight'] : 
-              state.temperature_out['outlet_path1'])) 
-            : undefined;
+              state.temperature_out['outlet_path1'])) : undefined;
         let tOut = parseFloat(tOutRaw);
         let tempText = '-';
-        
         if (!isNaN(tIn) && !isNaN(tOut)) {
-            if (Math.abs(tIn - tOut) > 0.05) {
-                tempText = `${formatLocalFloat(tIn, 1)} &rarr; ${formatLocalFloat(tOut, 1)}`;
-            } else {
-                tempText = `${formatLocalFloat(tIn, 1)}`;
-            }
+            tempText = Math.abs(tIn - tOut) > 0.05 ? `${formatLocalFloat(tIn, 1)} &rarr; ${formatLocalFloat(tOut, 1)}` : `${formatLocalFloat(tIn, 1)}`;
         }
 
-        let isoText = '-';
-        if (props.isoThick !== undefined && props.isoThick > 0) {
-            isoText = `${props.isoThick} mm<br><span style="font-size:0.8em;color:#666;">λ: ${props.isoLambda || 0.037}</span>`;
-        }
-
+        // Isolering og Detaljer
+        let isoText = props.isoThick > 0 ? `${props.isoThick} mm<br><span style="font-size:0.8em;color:#666;">λ: ${props.isoLambda || 0.037}</span>` : '-';
         let detailsText = '-';
         if (c.type === 'straightDuct' && data.pressureDrop) {
             detailsText = `λ: ${formatLocalFloat(data.lambda, 4)}<br><span style="font-size:0.8em;color:#666;">${formatLocalFloat(data.pressureDrop, 2)} Pa/m</span>`;
@@ -1093,13 +1147,17 @@ export function printDocumentation(event) {
             detailsText = `ζ: ${formatLocalFloat(data.zeta, 3)}`;
         }
 
+        // Opbygning
         const indent = Math.max(0, depth * 20);
-        let treePrefix = labelPath ? `<div style="font-size:10px; color:#555; margin-bottom:2px;">&#8627; ${labelPath}</div>` : '';
+        let treePrefix = labelPath && !isCritical ? `<div style="font-size:10px; color:#555; margin-bottom:2px;">&#8627; ${labelPath}</div>` : '';
         let nameHtml = `<strong><span style="color:#0084ff;">${currentNum}</span>. ${c.name}</strong><br><span style="font-size:0.8em;color:#666;">${c.details || ''}</span>`;
+        
+        // Let gul farve til kritisk vej for at adskille dem
+        const rowStyle = isCritical ? 'background-color: #fff9e6;' : '';
 
-        tableRows += `
-            <tr>
-                <td style="padding-left: ${indent + 8}px;">
+        return `
+            <tr style="${rowStyle}">
+                <td style="padding-left: ${isCritical ? 8 : indent + 8}px;">
                     ${treePrefix}
                     ${nameHtml}
                 </td>
@@ -1111,42 +1169,44 @@ export function printDocumentation(event) {
                 <td><strong>${formatLocalFloat(pressureLoss, 2)}</strong></td>
             </tr>
         `;
+    }
+
+    // ==========================================
+    // 4. Byg Tabellerne (Kritisk + Fuld Træ)
+    // ==========================================
+    
+    // TABEL 1: Den Kritiske Vej (Flad liste)
+    let criticalTableRows = '';
+    criticalPathNodes.forEach((node, index) => {
+        criticalTableRows += buildRowHtml(node, 0, '', `${index + 1}`, true);
+    });
+
+    // TABEL 2: Det Fulde Træ (Rekursiv liste)
+    let fullTreeRows = '';
+    function traversePrint(c, depth, labelPath, numPrefix = "", numCounter = 1) {
+        const currentNum = numPrefix ? `${numPrefix}.${numCounter}` : `${numCounter}`;
+        const pType = c.fittingType || (c.properties && c.properties.type) || c.type || '';
+        
+        fullTreeRows += buildRowHtml(c, depth, labelPath, currentNum, false);
 
         let expectedPorts = ['outlet'];
         if (pType.startsWith('tee_')) {
-            if (pType === 'tee_bullhead') {
-                expectedPorts = ['outlet_path1', 'outlet_path2'];
-            } else {
-                expectedPorts = ['outlet_branch', 'outlet_straight'];
-            }
+            expectedPorts = pType === 'tee_bullhead' ? ['outlet_path1', 'outlet_path2'] : ['outlet_branch', 'outlet_straight'];
+        } else if (c.type === 'terminalUnit') {
+            expectedPorts = [];
         }
 
-        // I udskriften tegner vi altid det fulde træ, uanset om det er foldet ind i UI'et
         expectedPorts.forEach(portName => {
-            let childLabel = '';
-            let childDepth = depth;
-            let nextPrefix = numPrefix;
-            let nextCounter = numCounter + 1;
+            let childLabel = ''; let childDepth = depth; let nextPrefix = numPrefix; let nextCounter = numCounter + 1;
 
             if (portName === 'outlet_straight' || portName === 'outlet') {
-                childLabel = '';
-                childDepth = depth; // Ligeud rykkes ikke ind
-                nextPrefix = numPrefix;
+                childDepth = depth; nextPrefix = numPrefix;
             } else if (portName === 'outlet_branch') {
-                childLabel = 'Afgrening';
-                childDepth = depth + 1; // Afgrening rykkes ind
-                nextPrefix = currentNum;
-                nextCounter = 1;
+                childLabel = 'Afgrening'; childDepth = depth + 1; nextPrefix = currentNum; nextCounter = 1;
             } else if (portName === 'outlet_path1') {
-                childLabel = 'Gren 1';
-                childDepth = depth + 1;
-                nextPrefix = currentNum + "a";
-                nextCounter = 1;
+                childLabel = 'Gren 1'; childDepth = depth + 1; nextPrefix = currentNum + "a"; nextCounter = 1;
             } else if (portName === 'outlet_path2') {
-                childLabel = 'Gren 2';
-                childDepth = depth + 1;
-                nextPrefix = currentNum + "b";
-                nextCounter = 1;
+                childLabel = 'Gren 2'; childDepth = depth + 1; nextPrefix = currentNum + "b"; nextCounter = 1;
             }
 
             if (c.children && c.children[portName] && c.children[portName].length > 0) {
@@ -1158,78 +1218,109 @@ export function printDocumentation(event) {
     }
 
     if (systemTree.length > 0) {
-        systemTree.forEach((root, index) => {
-            traversePrint(root, 0, '', "", index + 1);
-        });
+        systemTree.forEach((root, index) => traversePrint(root, 0, '', "", index + 1));
     }
 
+    // ==========================================
+    // 5. Opbyg Samlet HTML
+    // ==========================================
     const projectName = document.getElementById('projectName').value;
     const startAirflow = document.getElementById('system_airflow').value;
-
     const systemTypeInput = document.querySelector('input[name="systemFlowType"]:checked');
-    let systemTypeLabel = 'Ukendt';
-    if (systemTypeInput) {
-        const label = document.querySelector(`label[for="${systemTypeInput.id}"]`);
-        if (label) systemTypeLabel = label.textContent;
-    }
-
+    let systemTypeLabel = systemTypeInput ? document.querySelector(`label[for="${systemTypeInput.id}"]`).textContent : 'Ukendt';
     const temperature = document.getElementById('temperature').value;
     const printDate = new Date().toLocaleString('da-DK');
-
     const footerP = document.querySelector('.app-footer p');
     const appVersionText = footerP ? footerP.textContent.split(' --- ')[0] : 'Ventilationsberegner';
 
     const printHtml = `
         <style>
-            .print-table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; font-family: sans-serif; }
+            .print-table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; font-family: sans-serif; page-break-inside: avoid; }
             .print-table th, .print-table td { border: 1px solid #ccc; padding: 8px; text-align: left; vertical-align: middle; }
             .print-table th { background-color: #f5f5f5; }
+            .section-title { margin-top: 30px; border-bottom: 2px solid #ccc; padding-bottom: 5px; }
             body { font-family: sans-serif; color: #333; }
         </style>
+        
         <h1>Dokumentation for systemberegning</h1>
         ${projectName ? `<h2>Projekt: ${projectName}</h2>` : ''}
         <p>Genereret: ${printDate}</p>
+        
         <h3>Grunddata</h3>
         <p><strong>Start luftmængde:</strong> ${startAirflow} m³/h</p>
         <p><strong>Systemtype:</strong> ${systemTypeLabel}</p>
         <p><strong>Lufttemperatur (Start):</strong> ${temperature} °C</p>
         
+        ${diagramImage ? `<h3 class="section-title">3D System Diagram</h3><img src="${diagramImage}" style="max-width: 100%; max-height: 400px; object-fit: contain; border: 1px solid #ccc; margin-bottom: 20px;" alt="3D Visualisering">` : ''}
+        
+        <h3 class="section-title" style="color: #d32f2f;">1. Den Kritiske Streng</h3>
+        <p style="font-size: 11px; font-style: italic;">Ruten i anlægget med det højeste samlede tryktab.</p>
         <table class="print-table">
             <thead>
                 <tr>
-                    <th>Komponent (Træstruktur)</th>
+                    <th>Komponent (Rute)</th>
                     <th>Luftmængde [m³/h]</th>
                     <th>Hastighed [m/s]</th>
-                    <th>Temp. (Ind &rarr; Ud) [°C]</th>
+                    <th>Temp. [°C]</th>
                     <th>Isolering</th>
                     <th>Detaljer (&zeta;/&lambda;)</th>
                     <th>Tryktab [Pa]</th>
                 </tr>
             </thead>
             <tbody>
-                ${tableRows}
+                ${criticalTableRows || '<tr><td colspan="7">Ingen rute fundet.</td></tr>'}
             </tbody>
             <tfoot>
                 <tr>
-                    <td colspan="6" style="text-align:right;"><strong>Samlet systemtryktab (Kritisk vej)</strong></td>
-                    <td><strong>${formatLocalFloat(globalCriticalPressureDrop, 2)} Pa</strong></td>
+                    <td colspan="6" style="text-align:right;"><strong>Totalt Kritisk Tryktab</strong></td>
+                    <td style="color: #d32f2f;"><strong>${formatLocalFloat(globalCriticalPressureDrop, 2)} Pa</strong></td>
                 </tr>
             </tfoot>
         </table>
+
+        <h3 class="section-title">2. Fuldt Systemtræ (Alle komponenter)</h3>
+        <table class="print-table">
+            <thead>
+                <tr>
+                    <th>Komponent (Træstruktur)</th>
+                    <th>Luftmængde [m³/h]</th>
+                    <th>Hastighed [m/s]</th>
+                    <th>Temp. [°C]</th>
+                    <th>Isolering</th>
+                    <th>Detaljer (&zeta;/&lambda;)</th>
+                    <th>Tryktab [Pa]</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${fullTreeRows}
+            </tbody>
+        </table>
         
         <div style="margin-top: 30px; font-size: 8pt; color: #777;">
-            <p>Beregningen er foretaget med NIRAS Ventilationsberegner (${appVersionText})</p>
+            <p>Beregningen er foretaget med ${appVersionText}</p>
         </div>
     `;
+
+    // Fjern evt. gl. print overlay
+    let existingPrint = document.getElementById('print-container');
+    if (existingPrint) existingPrint.remove();
 
     const printContainer = document.createElement('div');
     printContainer.id = 'print-container';
     printContainer.innerHTML = printHtml;
     document.body.appendChild(printContainer);
 
-    window.print();
-
-    document.body.removeChild(printContainer);
+    // ==========================================
+    // 6. Asynkron Print for at undgå frysning
+    // ==========================================
+    setTimeout(() => {
+        window.print();
+        setTimeout(() => {
+            if (document.body.contains(printContainer)) {
+                document.body.removeChild(printContainer);
+            }
+        }, 500);
+    }, 250);
 }
 
 // --- Dynamiske UI Opdateringer ---
@@ -1576,6 +1667,7 @@ export function renderFittingInputs() {
             updateGeoInput();
         }
     }
+    
 }
 
 export function handleComponentTypeChange() {
@@ -1606,7 +1698,38 @@ export function handleComponentTypeChange() {
             <div id="systemFittingInputsContainer"></div>`;
 
         document.getElementById('systemFittingType').addEventListener('change', () => renderSystemFittingInputs());
-
+    } else if (type === 'terminalUnit') {
+        // --- NYT: ARMATUR / TERMINAL UNIT (Trin 8) ---
+        html = `
+            <div class="form-group">
+                <label>Navn / Reference</label>
+                <input type="text" id="sys_term_name" class="input-field" placeholder="f.eks. Rist Kontor 1">
+            </div>
+            <div class="form-group row">
+                <div class="col">
+                    <label>Luftmængde (m³/h)</label>
+                    <input type="number" id="sys_term_flow" class="input-field" value="150" step="5" min="0">
+                </div>
+                <div class="col">
+                    <label>Tryktab (Pa)</label>
+                    <input type="number" id="sys_term_dp" class="input-field" value="30" step="1" min="0">
+                </div>
+            </div>
+            <div class="form-group row">
+                <div class="col">
+                    <label>Tilslutning (Ø mm)</label>
+                    <input type="number" id="sys_term_dim" class="input-field" value="125" step="1" min="10">
+                </div>
+                <div class="col">
+                    <label>Strømningsretning</label>
+                    <select id="sys_term_dir" class="input-field">
+                        <option value="auto" selected>Auto (Følg anlæg)</option>
+                        <option value="supply">Indblæsning</option>
+                        <option value="extract">Udsugning</option>
+                    </select>
+                </div>
+            </div>
+        `;
     } else if (type === 'manualLoss') {
         systemComponentInputsContainer.innerHTML = `
             <div class="input-group"><label for="manualPressureLoss">Tryktab</label><div class="input-unit-wrapper" data-unit="Pa"><input type="text" id="manualPressureLoss" class="input-field" required></div></div>
@@ -1714,9 +1837,28 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
     targetContainer.innerHTML = '';
     const roundOptions = STANDARD_ROUND_SIZES_MM.map(s => `<option value="${s}">${s} mm</option>`).join('');
     const rectOptions = STANDARD_RECT_SIZES_MM.map(s => `<option value="${s}">${s} mm</option>`).join('');
-    const orientationOptions = `<option value="Left">Venstre</option><option value="Right">Højre</option><option value="Up">Op (loft)</option><option value="Down">Ned (gulv)</option>`;
-    let inputsHtml = '';
+    
     const id = (base) => `${base}${suffix}`;
+
+    // --- NYT: Den universelle retnings-vælger med skjult vinkelfelt ---
+    const getOrientationHtml = (label) => `
+        <div class="input-group">
+            <label for="${id('sys_orientation')}">${label}</label>
+            <select id="${id('sys_orientation')}" class="input-field" onchange="window.toggleCustomAngleField(this.value, '${suffix}')">
+                <option value="Left">Venstre(90grader)</option>
+                <option value="Right">Højre(270grader)</option>
+                <option value="Up">Op (loft180grader)</option>
+                <option value="Down">Ned (gulv(0 grader)</option>
+                <option value="Custom">Andet (Frie grader)</option>
+            </select>
+            <div id="customAngleContainer${suffix}" style="display: none; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; border: 1px dashed #00A4E0; width: 100%; box-sizing: border-box;">
+                <label style="display: block; font-size: 0.7rem; color: #ccc; margin-bottom: 4px;">Frie grader (0-360)</label>
+                <input type="number" id="${id('sys_orientationAngle')}" class="input-field" step="1" value="45" style="width: 100%;">
+            </div>
+        </div>
+    `;
+
+    let inputsHtml = '';
 
     switch (fittingType) {
         case 'bend_circ':
@@ -1725,7 +1867,7 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                     <div class="input-group"><label for="${id('sys_d')}">Diameter (d)</label><select id="${id('sys_d')}" class="input-field">${roundOptions}</select></div>
                     <div class="input-group"><label for="${id('sys_angle')}">Vinkel (α)</label><input type="text" id="${id('sys_angle')}" class="input-field" value="90"></div>
                     <div class="input-group"><label for="${id('sys_rd')}">R/d ratio</label><input type="text" id="${id('sys_rd')}" class="input-field" value="1.0"></div>
-                    <div class="input-group"><label for="${id('sys_orientation')}">Retning (3D)</label><select id="${id('sys_orientation')}" class="input-field">${orientationOptions}</select></div>
+                    <div class="input-group">${getOrientationHtml('Retning (3D)')}</div>
                 </div>`;
             break;
         case 'bend_rect':
@@ -1735,7 +1877,7 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                     <div class="input-group"><label for="${id('sys_w')}">Bredde (B)</label><select id="${id('sys_w')}" class="input-field">${rectOptions}</select></div>
                     <div class="input-group"><label for="${id('sys_angle_r')}">Vinkel (α)</label><input type="text" id="${id('sys_angle_r')}" class="input-field" value="90"></div>
                     <div class="input-group"><label for="${id('sys_rh')}">R/H ratio</label><input type="text" id="${id('sys_rh')}" class="input-field" value="1.0"></div>
-                    <div class="input-group"><label for="${id('sys_orientation')}">Retning (3D)</label><select id="${id('sys_orientation')}" class="input-field">${orientationOptions}</select></div>
+                    <div class="input-group">${getOrientationHtml('Retning (3D)')}</div>
                 </div>`;
             break;
         case 'expansion':
@@ -1793,10 +1935,7 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                         </div>
                     </div>
                     <div class="sub-group">${diameterInputs}</div>
-                    <div class="sub-group">
-                        <label for="${id('sys_orientation')}">Afgreningens retning (3D)</label>
-                        <select id="${id('sys_orientation')}" class="input-field">${orientationOptions}</select>
-                    </div>
+                    ${getOrientationHtml('Afgreningens retning (3D)')}
                 </div>`;
             break;
         }
@@ -1817,10 +1956,8 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                         <div class="input-group"><label for="${id('sys_tee_d_out2')}">Ø Gren 2</label><select id="${id('sys_tee_d_out2')}" class="input-field">${roundOptions}</select></div>
                     </div>
                 </div>
-                <div class="sub-group">
-                    <label for="${id('sys_orientation')}">Planets retning (3D)</label>
-                    <select id="${id('sys_orientation')}" class="input-field">${orientationOptions}</select>
-                </div>`;
+                    ${getOrientationHtml('Planets retning (3D)')}
+                    `;
             break;
     }
 
@@ -1874,7 +2011,13 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
             if (p.d_branch) setVal(id('sys_tee_d_branch'), p.d_branch);
             if (p.d_out1) setVal(id('sys_tee_d_out1'), p.d_out1);
             if (p.d_out2) setVal(id('sys_tee_d_out2'), p.d_out2);
-            if (p.orientation) setVal(id('sys_orientation'), p.orientation);
+            if (p.orientation) {
+                setVal(id('sys_orientation'), p.orientation);
+                window.toggleCustomAngleField(p.orientation, suffix);
+            }
+            if (p.orientationAngle !== undefined) {
+                setVal(id('sys_orientationAngle'), p.orientationAngle);
+            }
             
         } else if (isInlineAdd && window.currentParentDim) {
             const dim = window.currentParentDim;
@@ -1947,15 +2090,51 @@ export function showEditForm(id) {
     const container = document.getElementById(containerId);
     const pType = component.fittingType || (component.properties && component.properties.type) || component.type || '';
 
+    // RENSKREVET: IF/ELSE BLOK UDEN DUPLIKATIONER
     if (component.type === 'straightDuct') {
         renderSystemDuctInputs(container, component);
     } else if (component.type === 'fitting' || pType.startsWith('bend') || pType.startsWith('tee') || pType.startsWith('expansion') || pType.startsWith('contraction') || pType.startsWith('transition')) {
         renderSystemFittingInputs(container, component);
-    } else if (component.type === 'manualLoss') {
+    } else if (component.type === 'terminalUnit') {
+        // --- Byg og præ-udfyld formular til redigering af armatur ---
+        const p = component.properties || {};
         container.innerHTML = `
-            <div class="input-group"><label for="manualPressureLoss${suffix}">Tryktab</label><div class="input-unit-wrapper" data-unit="Pa"><input type="text" id="manualPressureLoss${suffix}" class="input-field" value="${component.pressureLoss}" required></div></div>
-            <div class="input-group"><label for="manualDescription${suffix}">Beskrivelse</label><input type="text" id="manualDescription${suffix}" class="input-field" value="${component.name}" placeholder="f.eks. Spjæld, rist, filter"></div>
-            <button type="button" class="button primary" onclick="window.handleUpdateComponent('${component.id}')">Opdater komponent</button>`;
+            <div class="form-group">
+                <label>Navn / Reference</label>
+                <input type="text" id="sys_term_name${suffix}" class="input-field" value="${component.name || ''}" placeholder="f.eks. Rist Kontor 1">
+            </div>
+            <div class="form-group row">
+                <div class="col">
+                    <label>Luftmængde (m³/h)</label>
+                    <input type="number" id="sys_term_flow${suffix}" class="input-field" value="${p.q_room || 150}" step="5" min="0">
+                </div>
+                <div class="col">
+                    <label>Tryktab (Pa)</label>
+                    <input type="number" id="sys_term_dp${suffix}" class="input-field" value="${p.pressureLoss || 30}" step="1" min="0">
+                </div>
+            </div>
+            <div class="form-group row">
+                <div class="col">
+                    <label>Tilslutning (Ø mm)</label>
+                    <input type="number" id="sys_term_dim${suffix}" class="input-field" value="${p.diameter || 125}" step="1" min="10">
+                </div>
+                <div class="col">
+                    <label>Strømningsretning</label>
+                    <select id="sys_term_dir${suffix}" class="input-field">
+                        <option value="auto" ${p.direction === 'auto' ? 'selected' : ''}>Auto (Følg anlæg)</option>
+                        <option value="supply" ${p.direction === 'supply' ? 'selected' : ''}>Indblæsning</option>
+                        <option value="extract" ${p.direction === 'extract' ? 'selected' : ''}>Udsugning</option>
+                    </select>
+                </div>
+            </div>
+            <button type="button" class="button primary" onclick="window.handleUpdateComponent('${component.id}')">Opdater komponent</button>
+        `;
+    } else if (component.type === 'manualLoss') {
+            const pLoss = component.properties && component.properties.pressureLoss !== undefined ? component.properties.pressureLoss : '';
+            container.innerHTML = `
+                <div class="input-group"><label for="manualPressureLoss${suffix}">Tryktab</label><div class="input-unit-wrapper" data-unit="Pa"><input type="text" id="manualPressureLoss${suffix}" class="input-field" value="${pLoss}" required></div></div>
+                <div class="input-group"><label for="manualDescription${suffix}">Beskrivelse</label><input type="text" id="manualDescription${suffix}" class="input-field" value="${component.name}" placeholder="f.eks. Spjæld, rist, filter"></div>
+                <button type="button" class="button primary" onclick="window.handleUpdateComponent('${component.id}')">Opdater komponent</button>`;
     } else {
         container.innerHTML = 'Redigering ikke understøttet for denne type endnu.';
     }
@@ -2044,36 +2223,37 @@ export function showAddForm(parentId, parentPort) {
     }
 
     const containerId = `add_container_${parentId || 'root'}_${parentPort || 'root'}`;
-    formWrapper.innerHTML = `
-        <div class="form-header-drag" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color);">
-            <h4 style="margin:0; color: var(--primary-color); pointer-events:none;">Tilføj komponent <br><small style="color:var(--text-muted-color); font-weight:normal; font-size:0.85rem;">Efter: ${contextText}</small></h4>
-            <button class="button secondary" style="padding:4px 12px; width:auto; margin:0;" onclick="
-                this.closest('.inline-form-wrapper').remove(); 
-                const emptyBtn = document.getElementById('emptyStateButtonContainer');
-                if (emptyBtn && !window.stateManager.getSystemComponents().length) {
-                    emptyBtn.style.display='';
-                    const emptyTableWrap = document.getElementById('emptyTableWrap');
-                    if (emptyTableWrap) emptyTableWrap.style.display='none';
-                }
-                window.currentAddParentId = null;
-                window.currentAddParentPort = null;
-                window.currentParentDim = null;
-                window.currentParentProps = null;
-            ">Annuller & Luk</button>
-        </div>
-        
-        <div class="input-group" style="margin-top: 10px;">
-            <label for="inlineComponentType">Komponenttype</label>
-            <select id="inlineComponentType" class="input-field" onchange="window.handleInlineComponentTypeChange('${containerId}')">
-                <option value="">-- Vælg type --</option>
-                <option value="straightDuct">Kanal</option>
-                <option value="fitting">Formstykke</option>
-                <option value="manualLoss">Manuelt tab</option>
-            </select>
-        </div>
-        <input type="hidden" id="systemComponentType" value="straightDuct">
-        <div id="${containerId}"></div>
-    `;
+        formWrapper.innerHTML = `
+            <div class="form-header-drag" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color);">
+                <h4 style="margin:0; color: var(--primary-color); pointer-events:none;">Tilføj komponent <br><small style="color:var(--text-muted-color); font-weight:normal; font-size:0.85rem;">Efter: ${contextText}</small></h4>
+                <button class="button secondary" style="padding:4px 12px; width:auto; margin:0;" onclick="
+                    this.closest('.inline-form-wrapper').remove(); 
+                    const emptyBtn = document.getElementById('emptyStateButtonContainer');
+                    if (emptyBtn && !window.stateManager.getSystemComponents().length) {
+                        emptyBtn.style.display='';
+                        const emptyTableWrap = document.getElementById('emptyTableWrap');
+                        if (emptyTableWrap) emptyTableWrap.style.display='none';
+                    }
+                    window.currentAddParentId = null;
+                    window.currentAddParentPort = null;
+                    window.currentParentDim = null;
+                    window.currentParentProps = null;
+                ">Annuller & Luk</button>
+            </div>
+            
+            <div class="input-group" style="margin-top: 10px;">
+                <label for="inlineComponentType">Komponenttype</label>
+                <select id="inlineComponentType" class="input-field" onchange="window.handleInlineComponentTypeChange('${containerId}')">
+                    <option value="">-- Vælg type --</option>
+                    <option value="straightDuct">Kanal</option>
+                    <option value="fitting">Formstykke</option>
+                    <option value="terminalUnit">Armatur / Terminal</option> 
+                    <option value="manualLoss">Manuelt tab</option>
+                </select>
+            </div>
+            <input type="hidden" id="systemComponentType" value="straightDuct">
+            <div id="${containerId}"></div>
+        `;
 
     const sysContainer = document.getElementById('systemComponentsContainer');
     sysContainer.appendChild(formWrapper);
@@ -2172,9 +2352,51 @@ export function handleInlineComponentTypeChange(containerId) {
             <div class="input-group"><label for="manualPressureLoss">Tryktab</label><div class="input-unit-wrapper" data-unit="Pa"><input type="text" id="manualPressureLoss" class="input-field" required></div></div>
             <div class="input-group"><label for="manualDescription">Beskrivelse</label><input type="text" id="manualDescription" class="input-field" placeholder="f.eks. Spjæld, rist, filter"></div>
         <button type="button" class="button primary" onclick="window.handleInlineComponentSubmit(event, '_inline')">Tilføj til system</button>`;
+        
+    } else if (type === 'terminalUnit') {
+        
+        // ----------------------------------------------------------------------
+        // --- NYT: TRIN 8 - Formular til tilføjelse af Armatur (Inline) ---
+        // ----------------------------------------------------------------------
+        container.innerHTML = `
+            <div class="input-group" style="margin-bottom: 10px;">
+                <label>Navn / Reference</label>
+                <input type="text" id="sys_term_name_inline" class="input-field" placeholder="f.eks. Rist Kontor 1">
+            </div>
+            <div class="input-field-group">
+                <div class="input-group">
+                    <label>Luftmængde</label>
+                    <div class="input-unit-wrapper" data-unit="m³/h">
+                        <input type="number" id="sys_term_flow_inline" class="input-field" value="150" step="5" min="0">
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label>Tryktab</label>
+                    <div class="input-unit-wrapper" data-unit="Pa">
+                        <input type="number" id="sys_term_dp_inline" class="input-field" value="30" step="1" min="0">
+                    </div>
+                </div>
+            </div>
+            <div class="input-field-group" style="margin-top: 10px;">
+                <div class="input-group">
+                    <label>Tilslutning</label>
+                    <div class="input-unit-wrapper" data-unit="Ø mm">
+                        <input type="number" id="sys_term_dim_inline" class="input-field" value="125" step="1" min="10">
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label>Strømningsretning</label>
+                    <select id="sys_term_dir_inline" class="input-field">
+                        <option value="auto" selected>Auto (Følg anlæg)</option>
+                        <option value="supply">Indblæsning</option>
+                        <option value="extract">Udsugning</option>
+                    </select>
+                </div>
+            </div>
+            <button type="button" class="button primary" onclick="window.handleInlineComponentSubmit(event, '_inline')" style="margin-top: 15px; width: 100%;">Tilføj Armatur</button>
+        `;
     }
 }
-
 // --- Validering af T-stykker før lagring/oppdatering ---
 
 window.handleValidatedSubmit = function(event, suffix) {
@@ -2192,6 +2414,11 @@ window.handleValidatedUpdate = function(id, suffix) {
 };
 
 function validateTeeFlows(suffix, compId = null) {
+    // --- Skip validering i Bottom-Up, da flow regnes baglæns! ---
+    if (window.stateManager && window.stateManager.state.calculationMode === 'bottom-up') {
+        return true; 
+    }
+
     const isBullhead = document.getElementById(`sys_tee_q_out1${suffix}`) !== null;
     const isStandardTee = document.getElementById(`sys_tee_q_straight${suffix}`) !== null;
     
