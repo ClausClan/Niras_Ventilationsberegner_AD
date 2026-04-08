@@ -376,6 +376,12 @@ export function getSystemFormHtml() {
                                 <input type="radio" id="calcModeBottomUp" name="calculationMode" value="bottom-up" onchange="window.toggleCalculationMode(this.value)"><label for="calcModeBottomUp">Bottom-Up (Armatur)</label> 
                             </div>
                         </div>
+
+                        <!-- Tryk tilrådighed -->
+                        <div class="input-group" style="margin-bottom: 0;">
+                            <label for="manualFanPressure" title="Lad stå på 0 for automatisk at bruge Kritisk Vej">Tilgængeligt tryk (Pa)</label>
+                            <input type="number" id="manualFanPressure" class="input-field" style="width: 110px;" value="0" min="0" step="1" placeholder="0 = Auto" onchange="window.handleFanPressureChange(this.value)">
+                        </div>
                         
                     </div>
                     <div class="input-group">
@@ -795,13 +801,61 @@ export function renderSystem() {
             </table>
         </div>`;
 
-    totalPressureDropContainer.innerHTML = `
-        <div class="result-card">
-            <h3>Samlet systemtryktab (Kritisk vej)</h3>
-            <p class="highlight">${formatLocalFloat(globalCriticalPressureDrop, 2)} Pa</p>
-        </div>`;
-}
+const manualPress = parseFloat(window.stateManager?.state?.manualFanPressure || 0);
+    const critPress = globalCriticalPressureDrop;
+    const isManual = manualPress > 0;
 
+    if (!isManual) {
+        // AUTO MODE: Viser kun kritisk vej
+        totalPressureDropContainer.innerHTML = `
+            <div class="result-card">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <h3 style="margin: 0 0 4px 0; font-size: 1.1rem; color: #fff;">Systemets Tryktab</h3>
+                        <p style="font-size: 0.8rem; color: var(--text-muted-color); margin: 0;">Kritisk vej (Auto-beregnet)</p>
+                    </div>
+                    <div class="highlight" style="font-size: 1.5rem; font-weight: bold; color: var(--primary-neon-blue);">
+                        ${formatLocalFloat(critPress, 1)} Pa
+                    </div>
+                </div>
+            </div>`;
+    } else {
+
+        // MANUEL MODE: Viser regnestykket
+        const diff = manualPress - critPress;
+        const isDeficit = diff < 0;
+        const absDiff = Math.abs(diff);
+
+        const resultLabel = isDeficit ? 'Tryk underskud' : 'Tryk overskud';
+        const resultColor = isDeficit ? 'var(--error-color)' : 'var(--primary-neon-blue)';
+
+        let warningHtml = isDeficit 
+            ? `<div style="font-size: 0.8rem; color: var(--error-color); margin-top: 8px; font-weight: bold;">Advarsel: Tilgængeligt tryk er lavere end systemets tryktab!</div>` 
+            : '';
+
+        totalPressureDropContainer.innerHTML = `
+            <div class="result-card" style="border: 1px solid ${isDeficit ? 'var(--error-color)' : 'var(--border-color)'}">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                    <div>
+                        <div style="font-size: 0.95rem; color: #ccc; margin-bottom: 6px;">Kritisk vej:</div>
+                        <div style="font-size: 0.95rem; color: #ccc; margin-bottom: 6px;">Tilgængeligt tryk:</div>
+                        <h3 style="margin: 8px 0 0 0; font-size: 1.1rem; color: ${resultColor};">${resultLabel}:</h3>
+                        ${warningHtml}
+                    </div>
+                    
+                    <div class="highlight" style="text-align:right;">
+                        <div style="font-size: 0.95rem; color: #ccc; margin-bottom: 6px;">${formatLocalFloat(critPress, 1)} Pa</div>
+                        <div style="font-size: 0.95rem; color: #ccc; margin-bottom: 6px; border-bottom: 1px solid #555; padding-bottom: 6px;">
+                            ${formatLocalFloat(manualPress, 1)} Pa
+                        </div>
+                        <div style="font-size: 1.2rem; font-weight: bold; color: ${resultColor}; margin-top: 8px;">
+                            ${formatLocalFloat(absDiff, 1)} Pa
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+    }
+}
 // --- Modals ---
 
 export function showDuctDetails() {
