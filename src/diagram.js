@@ -585,7 +585,7 @@ export function renderDiagram(keepControls = false) {
         scene = new THREE.Scene();
         scene.background = new THREE.Color(0x1a1a24);
 
-        camera = new THREE.PerspectiveCamera(45, webglContainer.clientWidth / webglContainer.clientHeight, 0.1, 10000);
+        camera = new THREE.PerspectiveCamera(45, webglContainer.clientWidth / webglContainer.clientHeight, 1, 1000000);
         camera.position.set(0, 0, 800);
 
         renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -596,6 +596,44 @@ export function renderDiagram(keepControls = false) {
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
         controls.screenSpacePanning = true;
+        
+        // Sikkerhedsgrænser
+        controls.maxDistance = 500000;
+        controls.minDistance = 50; 
+        controls.maxPolarAngle = Math.PI - 0.05; 
+
+        // ==========================================
+        // THE CUSTOM CAD ZOOM ENGINE
+        // ==========================================
+        controls.enableZoom = false; // 1. Sluk den indbyggede (og ustabile) zoom helt!
+
+        renderer.domElement.addEventListener('wheel', (e) => {
+            e.preventDefault(); // Stop browserens standard-scroll
+            
+            // 2. BESTEM ZOOM-HASTIGHEDEN HER (0.15 = 15% pr. rul)
+            // Sæt den ned til 0.05 for ultra-langsom, eller 0.25 for hurtig.
+            const zoomSensitivity = 0.15; 
+            
+            // 3. MAGIC TRICK: Math.sign tvinger alle rul (selv kæmpeværdier fra musen) 
+            // ned til enten præcis +1 eller præcis -1.
+            const direction = Math.sign(e.deltaY); 
+            
+            // 4. Mål den nuværende afstand
+            const currentDist = camera.position.distanceTo(controls.target);
+            
+            // 5. Regn den nye afstand ud baseret på vores låste sensitivitet
+            let newDist = currentDist * (1 + (direction * zoomSensitivity));
+            
+            // 6. Sørg for, at vi ikke bryder min/max grænserne
+            newDist = Math.max(controls.minDistance, Math.min(controls.maxDistance, newDist));
+            
+            // 7. Skub kameraet frem eller tilbage langs den linje, det kigger ad
+            const vector = new THREE.Vector3().subVectors(camera.position, controls.target).normalize();
+            camera.position.copy(controls.target).add(vector.multiplyScalar(newDist));
+            
+            controls.update();
+        }, { passive: false });
+        // ==========================================
 
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         scene.add(ambientLight);
@@ -886,17 +924,43 @@ export function renderDiagram(keepControls = false) {
 
                         document.body.appendChild(hudMenu);
 
-                        // Positionering med skalering
-                        const scale = 0.75;
-                        let targetX = e.clientX / scale;
-                        let targetY = e.clientY / scale;
-
-                        hudMenu.style.left = `${targetX}px`;
-                        hudMenu.style.top = `${targetY}px`;
+                        // --- THE HUD POSITIONING ---
+                        hudMenu.style.position = 'fixed'; 
+                        hudMenu.style.opacity = '0'; 
                         
                         setTimeout(() => {
+                            const isDesktop = document.body.classList.contains('desktop-mode');
+                            const scale = isDesktop ? 0.75 : 1.0;
+                            
+                            // 1. Mål den rå (uskaleret) størrelse på menuen
+                            const rawWidth = hudMenu.offsetWidth || 220;
+                            const rawHeight = hudMenu.offsetHeight || 250;
+                            
+                            // 2. Beregn den faktiske fysiske størrelse på skærmen
+                            const actualWidth = rawWidth * scale;
+                            const actualHeight = rawHeight * scale;
+                            
+                            // 3. Brug musens rå skærmkoordinater direkte! (Bund-Midt)
+                            let targetX = e.clientX - (actualWidth / 2);
+                            let targetY = e.clientY - actualHeight - 15; // 15px luft ned til musespidsen
+                            
+                            // 4. Kant-tjek (Auto-Bounds) mod vinduets fysiske pixels
+                            if (targetX < 10) targetX = 10; 
+                            if (targetX + actualWidth > window.innerWidth - 10) targetX = window.innerWidth - actualWidth - 10; 
+                            
+                            if (targetY < 10) {
+                                targetY = e.clientY + 15; // Ikke plads opad? Fold ned i stedet!
+                            }
+                            
+                            // 5. Anvend position OG lokal CSS-skalering!
+                            hudMenu.style.left = `${targetX}px`;
+                            hudMenu.style.top = `${targetY}px`;
+                            hudMenu.style.transform = `scale(${scale})`;
+                            hudMenu.style.transformOrigin = 'top left'; // Sørger for at menuen sidder urokkeligt fast i vores Left/Top koordinat
+                            hudMenu.style.opacity = '1';
+                            
                             hudMenu.classList.add('active');
-                        }, 10);
+                        }, 0);
 
                         setTimeout(() => {
                             const closeMenu = (eClick) => {
@@ -2051,19 +2115,19 @@ window.setCameraView = function(view) {
 
     controls.target.copy(center);
 
-    // Standard "Op" retning for kameraet
+
+    // Tving altid standard OP for OrbitControls, så vi ikke ødelægger musens zoom/rotations-matematik
     camera.up.set(0, 1, 0);
 
     // Snap kameraet til de rigtige akser
     switch(view) {
         case 'top': 
-            camera.position.set(center.x, center.y + dist, center.z); 
-            // Fix Gimbal Lock: Når vi kigger direkte ned, skal toppen af skærmen pege mod -Z
-            camera.up.set(0, 0, -1); 
+            // PRO TRICK: Vi tilføjer + 0.1 til Z for at undgå en 100% lodret vinkel (Gimbal Lock)
+            camera.position.set(center.x, center.y + dist, center.z + 0.1); 
             break;
         case 'bottom': 
-            camera.position.set(center.x, center.y - dist, center.z); 
-            camera.up.set(0, 0, 1); 
+            // PRO TRICK: Vi trækker 0.1 fra Z
+            camera.position.set(center.x, center.y - dist, center.z - 0.1); 
             break;
         case 'front': 
             camera.position.set(center.x, center.y, center.z + dist); 
