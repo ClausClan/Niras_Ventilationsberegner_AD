@@ -7,7 +7,7 @@ let diagramSettings = {
     colorMode: 'default',
     labels: {
         name: true, dim: false, flow: false, vel: false, 
-        press: false, pam: false, temp: false, isoMm: false
+        press: false, pam: false, temp: false, isoMm: false, availPress: false
     },
     textSettingsExpanded: false, 
     effectsSettingsExpanded: false,
@@ -56,6 +56,7 @@ window.updateDiagramSettings = () => {
 
     diagramSettings.animateFlow = check('chk_anim_flow');
     diagramSettings.showInsulation = check('chk_show_iso');
+    diagramSettings.labels.availPress = check('lbl_availPress');
 
     const gridSpacing = document.getElementById('num_grid_spacing');
     if (gridSpacing) diagramSettings.grid.spacingMm = parseFloat(gridSpacing.value) || 1000;
@@ -250,10 +251,30 @@ function getColorByValue(val, mode, min, max) {
 }
 
 function getColor(comp, mode, min, max) {
+    // 1. Kritisk vej
     if (mode === 'critical') {
         return comp.state?.isCriticalPath ? 0xFF0055 : 0x3a7bd5; 
     }
 
+    // 2. NYT: Tilgængeligt Tryk (Med indbygget Underskuds-advarsel)
+    if (mode === 'availablePressure') {
+        const avail = comp.state?.availablePressure !== undefined ? comp.state.availablePressure : 0;
+        
+        if (avail < 0) {
+            return 0xFF00FF; // ALARM: Underskud! Returner skrigende magenta/lilla.
+        }
+        
+        // Normal Heatmap (Overskud): Fra Grøn (0) til Rød (Max)
+        let range = max;
+        if (range <= 0) range = 0.1; // Undgå division med 0
+        
+        let t = Math.max(0, Math.min(1, avail / range));
+        let color = new THREE.Color();
+        color.setHSL((1 - t) * 0.33, 1.0, 0.5); 
+        return color.getHex();
+    }
+
+    // 3. De andre standard modes
     let val = 0;
     if (mode === 'velocity') val = comp.state?.velocity || 0;
     else if (mode === 'pressure') val = comp.type === 'straightDuct' ? (comp.state?.calculationDetails?.pressureDrop || 0) : 0;
@@ -448,7 +469,8 @@ export function renderDiagram(keepControls = false) {
                     <option value="temperature" style="background: #111; color: white;" ${diagramSettings.colorMode === 'temperature' ? 'selected' : ''}>Temperatur (°C)</option>
                     <option value="critical" style="background: #111; color: white;" ${diagramSettings.colorMode === 'critical' ? 'selected' : ''}>Kritisk Vej</option>
                     <option value="wireframe" style="background: #111; color: white;" ${diagramSettings.colorMode === 'wireframe' ? 'selected' : ''}>Trådmodel (X-Ray)</option>
-                 </select>
+                    <option value="availablePressure" style="background: #111; color: white;" ${diagramSettings.colorMode === 'availablePressure' ? 'selected' : ''}>Tilgængeligt tryk i systemet (Pa)</option>
+                    </select>
 
                  <!-- Foldbar Effekter -->
                  <div style="margin-bottom: 12px;">
@@ -496,13 +518,17 @@ export function renderDiagram(keepControls = false) {
                          <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
                             <input type="checkbox" id="lbl_temp" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.labels.temp ? 'checked' : ''}> Temperatur
                          </label>
-                        <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
+                         <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
                             <input type="checkbox" id="lbl_isoMm" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.labels.isoMm ? 'checked' : ''}> Isolering (mm)
+                         </label>
+                         <label style="display: flex; align-items: center; font-size: 0.75rem; margin-bottom: 4px; cursor: pointer; color: white;">
+                            <input type="checkbox" id="lbl_availPress" style="margin-right: 6px; cursor: pointer;" onchange="window.updateDiagramSettings()" ${diagramSettings.labels.availPress ? 'checked' : ''}> Tilgængeligt Tryk (Pa)
                          </label>
                          <div style="height: 1px; background: rgba(255,255,255,0.2); margin: 6px 0;"></div>
                          <label style="display: flex; align-items: center; font-size: 0.75rem; cursor: pointer; color: white;">
                             <input type="checkbox" id="lbl_all" style="margin-right: 6px; cursor: pointer;" onchange="window.toggleAllLabels(this)" ${Object.values(diagramSettings.labels).every(v=>v) ? 'checked' : ''}> <strong>Vis alt</strong>
                          </label>
+
                      </div>
                  </div>
                  <!-- Foldbar Grid settings -->
@@ -1094,22 +1120,35 @@ export function renderDiagram(keepControls = false) {
         return; // Afbryd funktionen her - der er ingen rør at tegne
     }
 
-    let maxV = -Infinity, minV = Infinity, maxP = -Infinity, minP = Infinity, maxT = -Infinity, minT = Infinity;
+    // 2. Vi kører loopet og samler værdierne op
+    let maxV = -Infinity, minV = Infinity, maxP = -Infinity, minP = Infinity, maxT = -Infinity, minT = Infinity, maxA = -Infinity, minA = Infinity;;
     components.forEach(c => {
         let v = c.state?.velocity || 0;
         let pDrop = c.type === 'straightDuct' ? (c.state?.calculationDetails?.pressureDrop || 0) : 0;
         let t_in = c.state?.temperature_in !== undefined ? c.state.temperature_in : 20;
         let t_out = c.state?.temperature_out?.outlet || c.state?.temperature_out?.outlet_straight || t_in;
+        let a = c.state?.availablePressure !== undefined ? c.state.availablePressure : 0;
         if (v > maxV) maxV = v; if (v < minV) minV = v;
         if (pDrop > maxP) maxP = pDrop; if (pDrop < minP) minP = pDrop;
         if (t_in > maxT) maxT = t_in; if (t_in < minT) minT = t_in;
         if (t_out > maxT) maxT = t_out; if (t_out < minT) minT = t_out;
+        if (a > maxA) maxA = a; if (a < minA) minA = a;
     });
+
+    // 3. Fallbacks, hvis anlægget er helt tomt
     if (maxV === -Infinity) { maxV = 10; minV = 0; }
     if (maxP === -Infinity) { maxP = 2; minP = 0; }
     if (maxT === -Infinity) { maxT = 30; minT = 5; }
-    let currentMin = diagramSettings.colorMode === 'velocity' ? minV : (diagramSettings.colorMode === 'pressure' ? minP : minT);
-    let currentMax = diagramSettings.colorMode === 'velocity' ? maxV : (diagramSettings.colorMode === 'pressure' ? maxP : maxT);
+    if (maxA === -Infinity) { maxA = 100; minA = 0; }
+
+    // 4. Sæt currentMin og currentMax ud fra den valgte farve-mode
+    let currentMin = diagramSettings.colorMode === 'velocity' ? minV : 
+                    (diagramSettings.colorMode === 'pressure' ? minP : 
+                    (diagramSettings.colorMode === 'availablePressure' ? Math.max(0, minA) : minT));
+                    
+    let currentMax = diagramSettings.colorMode === 'velocity' ? maxV : 
+                    (diagramSettings.colorMode === 'pressure' ? maxP : 
+                    (diagramSettings.colorMode === 'availablePressure' ? maxA : maxT));
 
     const legendContainer = document.getElementById('diagramLegend');
     if (legendContainer) {
@@ -1141,6 +1180,11 @@ export function renderDiagram(keepControls = false) {
                 title = 'Tryktab (Kanaler)';
                 unit = 'Pa/m';
                 gradientCss = 'linear-gradient(to right, #0000FF, #00FF00, #FF0000)';
+            } else if (diagramSettings.colorMode === 'availablePressure') {
+                title = 'Tilgængeligt Tryk i systemet';
+                unit = 'Pa';
+                // Starter med Magenta (Underskud), går til Grøn (0), og rød (Max overskud)
+                gradientCss = 'linear-gradient(to right, #FF00FF 0%, #00FF00 20%, #FF0000 100%)';
             }
 
             legendContainer.innerHTML = `
@@ -1765,6 +1809,7 @@ else if (pType.includes('tee')) {
             const tOutRaw = compData.state?.temperature_out ? (compData.state.temperature_out['outlet'] || compData.state.temperature_out['outlet_straight'] || compData.state.temperature_out['outlet_path1']) : compData.state?.temperature_in;
             const temp = tOutRaw ? parseFloat(tOutRaw).toFixed(1) : '-';
             const isoMm = compData.properties?.isoThick ? parseFloat(compData.properties.isoThick) : 0;
+            const availPress = compData.state?.availablePressure !== undefined ? compData.state.availablePressure.toFixed(1) : null;
             
             let dimStr = '';
             const dim = compData.state?.inletDimension;
@@ -1784,6 +1829,7 @@ else if (pType.includes('tee')) {
             if (diagramSettings.labels.pam && pam !== null) details.push(`${pam} Pa/m`);
             if (diagramSettings.labels.temp) details.push(`${temp} °C`);
             if (diagramSettings.labels.isoMm && isoMm > 0) details.push(`${isoMm} mm iso`);
+            if (diagramSettings.labels.availPress && availPress !== null) details.push(`${availPress} Pa (Tilgængeligt Tryk)`);
 
             let txt = parts.join(' ');
             if (details.length > 0) {

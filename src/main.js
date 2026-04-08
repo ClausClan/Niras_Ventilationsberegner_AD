@@ -144,6 +144,16 @@ window.handlePasteBranch = function(targetCompId, targetPort) {
     }
 };
 
+
+window.handleFanPressureChange = (val) => {
+    if (window.stateManager) {
+        window.stateManager.setProjectParams({ manualFanPressure: val });
+        if (typeof window.recalculateSystem === 'function') window.recalculateSystem();
+        if (window.ui && typeof window.ui.renderSystem === 'function') window.ui.renderSystem();
+    }
+};
+
+
 window.deleteFitting = (id) => {
     removeFitting(id);
     ui.renderFittingsResult();
@@ -1648,6 +1658,60 @@ function recalculateSystem() {
         rootIds.forEach(rootId => { traverseAndCalculateThermodynamics(rootId, temp); });
     }
 
+    // -------------------------------------------------------------------------
+    // --- Akkumuleret & Tilgængeligt Tryk (Overskudstryk) ---
+    // -------------------------------------------------------------------------
+    let maxAccumulatedDrop = 0;
+    
+    function traverseAndAccumulatePressure(nodeId, currentAccumulated) {
+        const comp = userNodes[nodeId];
+        if (!comp || !comp.state) return;
+
+        // Find dette specifikke komponents hoved-tryktab
+        const mainDrop = comp.state.pressureLoss || 0;
+        
+        // Gem det samlede tryktab frem til og med denne komponent
+        comp.state.accumulatedPressureDrop = currentAccumulated + mainDrop;
+
+        if (comp.state.accumulatedPressureDrop > maxAccumulatedDrop) {
+            maxAccumulatedDrop = comp.state.accumulatedPressureDrop;
+        }
+
+        const childrenEdges = userEdges.filter(e => e.from === nodeId);
+        childrenEdges.forEach(edge => {
+            // Hvis T-stykke: Brug det specifikke tryktab for den port, vi forlader igennem
+            let branchSpecificDrop = mainDrop;
+            if (comp.state.portPressureLoss && comp.state.portPressureLoss[edge.fromPort] !== undefined) {
+                branchSpecificDrop = comp.state.portPressureLoss[edge.fromPort];
+            }
+            traverseAndAccumulatePressure(edge.to, currentAccumulated + branchSpecificDrop);
+        });
+    }
+
+    // Kør sweep fra alle startpunkter (aggregater)
+    rootIds.forEach(rootId => traverseAndAccumulatePressure(rootId, 0));
+
+    // --- NY LOGIK: Tilgængeligt Ventilatortryk ---
+    const rawManualPress = parseFloat(stateManager.state.manualFanPressure) || 0;
+    const isManualOverride = rawManualPress !== 0; // Nu fanger vi OGSÅ negative tal!
+    
+    // Vi bruger Math.abs() for at sikre, at vi altid regner med et positivt 
+    // overskudstryk, uanset om brugeren tastede +250 (Indblæsning) eller -250 (Udsugning)
+    const manualFanPress = Math.abs(rawManualPress); 
+        
+    // Hvis brugeren har tastet et tryk ind, bruger vi det. Ellers bruger vi (Auto) den kritiske vej.
+    const totalFanPressure = isManualOverride ? manualFanPress : maxAccumulatedDrop;
+
+    // Gem om anlægget er i underskud (ventilatoren er for svag)
+    stateManager.state.systemPressureDeficit = isManualOverride && (totalFanPressure < maxAccumulatedDrop);
+
+    // Udregn "Tilgængeligt Tryk" (Overskud) for alle komponenter
+    Object.values(userNodes).forEach(comp => {
+        if (comp.state && comp.state.accumulatedPressureDrop !== undefined) {
+            comp.state.availablePressure = totalFanPressure - comp.state.accumulatedPressureDrop;
+        }
+    });
+
     if (typeof window.stateManager.resumeHistory === 'function') {
         window.stateManager.resumeHistory();
     }
@@ -1990,6 +2054,10 @@ async function initializeApp() {
         // Gendan 3D visningsindstillinger med en kort forsinkelse, så motoren er startet
         if (loadedState.diagramSettings && typeof window.applyDiagramSettings === 'function') {
             setTimeout(() => window.applyDiagramSettings(loadedState.diagramSettings), 200);
+        }
+        if (loadedState.manualFanPressure) {
+            const extEl = document.getElementById('manualFanPressure');
+            if (extEl) extEl.value = loadedState.manualFanPressure;
         }
     }
     
