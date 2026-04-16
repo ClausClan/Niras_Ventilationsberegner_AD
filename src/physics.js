@@ -104,76 +104,127 @@ export function analyzeDuct(Q, shape, airflow_m3h, RHO, NU, diameter, sideA, sid
     else { const a = sideA, b = sideB; if (isNaN(a) || isNaN(b) || a <= 0 || b <= 0) throw new Error("Ugyldige dimensioner."); const a_m = a / 1000, b_m = b / 1000; const D_hyd = (2 * a_m * b_m) / (a_m + b_m); params = { mode: 'analyze', shape, airflow: airflow_m3h, diameter: 0, sideA: a, sideB: b, D_hyd, area: { shape: 'rect', a: a, b: b } }; return { ...params, ...getPerformance(Q, D_hyd, { shape: 'rect', a: a, b: b }, RHO, NU) }; }
 }
 
-export function calculateTeePressureLoss(flows, diams, RHO) {
+// ============================================================================
+// --- UNIVERSAL TEE FITTING CALCULATIONS (Round, Rectangular & Mixed) ---
+// ============================================================================
+
+/**
+ * Hjælpefunktion: Beregner det korrekte indvendige tværsnitsareal (m²) 
+ * uanset om porten er rund eller firkantet. Sørger for bagudkompatibilitet.
+ */
+export function getPortArea(portDim, legacyD) {
+    // FIX: Hvis der sendes et rent tal ind (f.eks. 250) i stedet for et objekt
+    if (typeof portDim === 'number' || typeof portDim === 'string') {
+        return Math.PI * (getInternalDim(portDim) / 2000) ** 2;
+    }
+
+    if (!portDim) {
+        // Legacy fallback: Hvis der kun sendes en ren diameter ind i parameter 2
+        return Math.PI * (getInternalDim(legacyD) / 2000) ** 2;
+    }
+    
+    if (portDim.shape === 'rectangular' || portDim.shape === 'rect') {
+        const w = portDim.w || portDim.sideB || portDim.width || 0;
+        const h = portDim.h || portDim.sideA || portDim.height || 0;
+        return (getInternalDim(w) / 1000) * (getInternalDim(h) / 1000);
+    } else {
+        const d = portDim.d || portDim.diameter || legacyD || 0;
+        return Math.PI * (getInternalDim(d) / 2000) ** 2;
+    }
+}
+
+export function calculateTeePressureLoss(flows, dims, RHO) {
     const Q_c = flows.q_in / 3600, Q_s = flows.q_straight / 3600, Q_b = flows.q_branch / 3600;
-    const d_c_int = getInternalDim(diams.d_in), d_s_int = getInternalDim(diams.d_straight), d_b_int = getInternalDim(diams.d_branch);
-    const A_c = Math.PI * (d_c_int / 2000) ** 2, A_s = Math.PI * (d_s_int / 2000) ** 2, A_b = Math.PI * (d_b_int / 2000) ** 2;
+    
+    // NYT: Henter arealet dynamisk ud fra form (Understøtter blandede former)
+    const A_c = getPortArea(dims.in || dims.c, dims.d_in);
+    const A_s = getPortArea(dims.straight || dims.s, dims.d_straight);
+    const A_b = getPortArea(dims.branch || dims.b, dims.d_branch);
+
+    if (A_c <= 0 || A_s <= 0 || A_b <= 0) return { loss_straight: 0, loss_branch: 0, details_straight: {}, details_branch: {} };
+
     const v_c = Q_c / A_c, v_s = Q_s / A_s, v_b = Q_b / A_b;
+    
+    // Dynamisk Zeta (ζ) beregnet ud fra masse- og energibevarelse
     const C_s = 1.0 - (Q_s / Q_c) ** 2 * (1 - (A_s / A_c) ** 2);
     const C_b = (1.0 + (v_b / v_c) ** 2) - 2 * (v_s / v_c) ** 2 * (A_s / A_c) * (Q_s / Q_c);
+    
     const dynamicPressureIn = (RHO / 2) * v_c ** 2;
+    
     const details_straight = { Q_m3s: Q_s, A_m2: A_s, v_ms: v_s, zeta: C_s, Pdyn_Pa: dynamicPressureIn };
     const details_branch = { Q_m3s: Q_b, A_m2: A_b, v_ms: v_b, zeta: C_b, Pdyn_Pa: dynamicPressureIn };
+    
     return { loss_straight: C_s * dynamicPressureIn, loss_branch: C_b * dynamicPressureIn, details_straight, details_branch };
 }
 
-export function calculateConvergingTeePressureLoss(flows, diams, RHO) {
-    // Merging flow: q_straight + q_branch = q_out
+export function calculateConvergingTeePressureLoss(flows, dims, RHO) {
     const Q_s = flows.q_straight / 3600, Q_b = flows.q_branch / 3600;
     const Q_c = Q_s + Q_b; // Common outlet flow
 
-    const d_s_int = getInternalDim(diams.d_straight), d_b_int = getInternalDim(diams.d_branch), d_c_int = getInternalDim(diams.d_common);
-    const A_s = Math.PI * (d_s_int / 2000) ** 2, A_b = Math.PI * (d_b_int / 2000) ** 2, A_c = Math.PI * (d_c_int / 2000) ** 2;
+    const A_s = getPortArea(dims.straight || dims.s, dims.d_straight);
+    const A_b = getPortArea(dims.branch || dims.b, dims.d_branch);
+    const A_c = getPortArea(dims.common || dims.out || dims.c, dims.d_common);
+
+    if (A_c <= 0 || A_s <= 0 || A_b <= 0) return { loss_straight: 0, loss_branch: 0, details_straight: {}, details_branch: {}, q_out: 0 };
+
     const v_s = Q_s / A_s, v_b = Q_b / A_b, v_c = Q_c / A_c;
 
-    // Loss coefficients for converging flow (based on ASHRAE fundamentals)
     const C_sc = (v_s / v_c) ** 2 - 2 * (v_s / v_c) + 1;
     const C_bc = (v_b / v_c) ** 2 - 2 * (v_b / v_c) + 1;
 
     const dynamicPressureOut = (RHO / 2) * v_c ** 2;
-    const loss_straight = C_sc * dynamicPressureOut;
-    const loss_branch = C_bc * dynamicPressureOut;
-
+    
     const details_straight = { type: 'tee_merge', chosenPath: 'Ligeud', A_m2: A_s, v_ms: v_s, zeta: C_sc, Pdyn_Pa: dynamicPressureOut };
     const details_branch = { type: 'tee_merge', chosenPath: 'Afgrening', A_m2: A_b, v_ms: v_b, zeta: C_bc, Pdyn_Pa: dynamicPressureOut };
 
-    return { loss_straight, loss_branch, details_straight, details_branch, q_out: Q_c * 3600 };
+    return { loss_straight: C_sc * dynamicPressureOut, loss_branch: C_bc * dynamicPressureOut, details_straight, details_branch, q_out: Q_c * 3600 };
 }
 
-export function calculateBullheadTeeLoss(flows, diams, RHO) {
+export function calculateBullheadTeeLoss(flows, dims, RHO) {
     const Q_c = flows.q_in / 3600, Q_1 = flows.q_out1 / 3600, Q_2 = flows.q_out2 / 3600;
-    const d_c_int = getInternalDim(diams.d_in), d_1_int = getInternalDim(diams.d_out1), d_2_int = getInternalDim(diams.d_out2);
-    const A_c = Math.PI * (d_c_int / 2000) ** 2, A_1 = Math.PI * (d_1_int / 2000) ** 2, A_2 = Math.PI * (d_2_int / 2000) ** 2;
+    
+    const A_c = getPortArea(dims.in || dims.c, dims.d_in);
+    // FEJLEN VAR HER: dims.1 er ulovligt i JS. Det skal være dims['1']
+    const A_1 = getPortArea(dims.out1 || dims['1'], dims.d_out1);
+    const A_2 = getPortArea(dims.out2 || dims['2'], dims.d_out2);
+
+    if (A_c <= 0 || A_1 <= 0 || A_2 <= 0) return { loss1: 0, loss2: 0, details1: {}, details2: {} };
+
     const v_c = Q_c / A_c, v_1 = Q_1 / A_1, v_2 = Q_2 / A_2;
+    
     const C_1 = 1.0 + (v_1 / v_c) ** 2;
     const C_2 = 1.0 + (v_2 / v_c) ** 2;
+    
     const dynamicPressureIn = (RHO / 2) * v_c ** 2;
+    
     const details1 = { Q_m3s: Q_1, A_m2: A_1, v_ms: v_1, zeta: C_1, Pdyn_Pa: dynamicPressureIn };
     const details2 = { Q_m3s: Q_2, A_m2: A_2, v_ms: v_2, zeta: C_2, Pdyn_Pa: dynamicPressureIn };
+    
     return { loss1: C_1 * dynamicPressureIn, loss2: C_2 * dynamicPressureIn, details1, details2 };
 }
 
-export function calculateConvergingBullheadTeeLoss(flows, diams, RHO) {
-    // Merging flow: q_in1 + q_in2 = q_out
+export function calculateConvergingBullheadTeeLoss(flows, dims, RHO) {
     const Q_1 = flows.q_in1 / 3600, Q_2 = flows.q_in2 / 3600;
-    const Q_c = Q_1 + Q_2; // Common outlet flow
+    const Q_c = Q_1 + Q_2; 
 
-    const d_1_int = getInternalDim(diams.d_in1), d_2_int = getInternalDim(diams.d_in2), d_c_int = getInternalDim(diams.d_common);
-    const A_1 = Math.PI * (d_1_int / 2000) ** 2, A_2 = Math.PI * (d_2_int / 2000) ** 2, A_c = Math.PI * (d_c_int / 2000) ** 2;
+    // Samme rettelse her: dims['1'] og dims['2']
+    const A_1 = getPortArea(dims.in1 || dims['1'], dims.d_in1);
+    const A_2 = getPortArea(dims.in2 || dims['2'], dims.d_in2);
+    const A_c = getPortArea(dims.common || dims.out || dims.c, dims.d_common);
+
+    if (A_c <= 0 || A_1 <= 0 || A_2 <= 0) return { loss1: 0, loss2: 0, details1: {}, details2: {} };
+
     const v_1 = Q_1 / A_1, v_2 = Q_2 / A_2, v_c = Q_c / A_c;
 
-    // Loss coefficients for converging bullhead flow
     const C_1c = 0.4 * (1 - (Q_1 / Q_c)) ** 2;
     const C_2c = 0.4 * (1 - (Q_2 / Q_c)) ** 2;
 
     const dynamicPressureOut = (RHO / 2) * v_c ** 2;
-    const loss1 = C_1c * dynamicPressureOut;
-    const loss2 = C_2c * dynamicPressureOut;
-
+    
     const details1 = { type: 'tee_bullhead_merge', A_m2: A_1, v_ms: v_1, zeta: C_1c, Pdyn_Pa: dynamicPressureOut };
     const details2 = { type: 'tee_bullhead_merge', A_m2: A_2, v_ms: v_2, zeta: C_2c, Pdyn_Pa: dynamicPressureOut };
 
-    return { loss1, loss2, details1, details2 };
+    return { loss1: C_1c * dynamicPressureOut, loss2: C_2c * dynamicPressureOut, details1, details2 };
 }
 
 export function getSurroundingKeys(val, keys) {

@@ -1525,6 +1525,11 @@ export function updateFittingTypeOptions() {
             <option value="tee_asym">T-stykke, Asymmetrisk</option>
             <option value="tee_bullhead">T-stykke (Dobbelt Afgrening)</option>
         </optgroup>
+        <optgroup label="T-stykker (Rektangulær)">
+            <option value="tee_rect_sym">T-stykke, Symmetrisk (Firkantet)</option>
+            <option value="tee_rect_asym">T-stykke, Asymmetrisk (Firkantet)</option>
+            <option value="tee_rect_bullhead">T-stykke (Dobb. Afgrening, Firkantet)</option>
+        </optgroup>
     `;
 
     fittingSelect.innerHTML = optionsHtml;
@@ -1569,29 +1574,74 @@ export function renderFittingInputs() {
 
         const updateTeeUI = () => {
             const flowType = document.querySelector('input[name="fitTeeFlowType"]:checked').value;
+            const isRect = type.includes('_rect');
+            const isSym = type.includes('_sym');
+            const isBullhead = type.includes('bullhead');
+            
             const container = document.getElementById('fitTeeSpecificInputs');
             illustrationContainer.innerHTML = `<div class="illustration-container">${flowType === 'splitting' ? splittingSvg : mergingSvg}</div>`;
 
-            const isSym = type === 'tee_sym';
             let teeInputsHtml = '';
 
+            // 1. LUFTMÆNGDE FELTER
             if (isBullhead) {
                 if (flowType === 'splitting') {
-                    teeInputsHtml = `<div class="sub-group"><label>Luftmængder</label><div class="input-field-group"><div class="input-group"><label for="q_in">q Ind</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_in" class="input-field" required></div></div><div class="input-group"><label for="q_out1">q Ud 1</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_out1" class="input-field" required></div></div><div class="input-group"><label for="q_out2">q Ud 2</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_out2" class="input-field" required></div></div></div></div><div class="sub-group" id="teeDiameterInputs"><label>Diametre</label><div class="input-field-group"><div class="input-group"><label for="d_in">Ø Ind</label><select id="d_in" class="input-field">${roundOptions}</select></div><div class="input-group"><label for="d_out1">Ø Ud 1</label><select id="d_out1" class="input-field">${roundOptions}</select></div><div class="input-group"><label for="d_out2">Ø Ud 2</label><select id="d_out2" class="input-field">${roundOptions}</select></div></div></div>`;
-                } else { // merging bullhead
-                    teeInputsHtml = `<div class="sub-group"><label>Luftmængder</label><div class="input-field-group"><div class="input-group"><label for="q_in1">q Ind 1</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_in1" class="input-field" required></div></div><div class="input-group"><label for="q_in2">q Ind 2</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_in2" class="input-field" required></div></div></div></div><div class="sub-group" id="teeDiameterInputs"><label>Diametre</label><div class="input-field-group"><div class="input-group"><label for="d_in1">Ø Ind 1</label><select id="d_in1" class="input-field">${roundOptions}</select></div><div class="input-group"><label for="d_in2">Ø Ind 2</label><select id="d_in2" class="input-field">${roundOptions}</select></div><div class="input-group"><label for="d_common">Ø Ud</label><select id="d_common" class="input-field">${roundOptions}</select></div></div></div>`;
+                    teeInputsHtml = `<div class="sub-group"><label>Luftmængder</label><div class="input-field-group"><div class="input-group"><label for="q_in">q Ind</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_in" class="input-field" required></div></div><div class="input-group"><label for="q_out1">q Ud 1</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_out1" class="input-field" required></div></div><div class="input-group"><label for="q_out2">q Ud 2</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_out2" class="input-field" required></div></div></div></div>`;
+                } else {
+                    teeInputsHtml = `<div class="sub-group"><label>Luftmængder</label><div class="input-field-group"><div class="input-group"><label for="q_in1">q Ind 1</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_in1" class="input-field" required></div></div><div class="input-group"><label for="q_in2">q Ind 2</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_in2" class="input-field" required></div></div></div></div>`;
                 }
-            } else { // tee_sym or tee_asym
-                const diameterInputs = isSym ? `<div class="input-group"><label>Diameter (alle grene)</label><select id="d_in" class="input-field">${roundOptions}</select></div>` : `<div class="input-field-group"><div class="input-group"><label id="label_d_in" for="d_in">Ø Ind/Ud</label><select id="d_in" class="input-field">${roundOptions}</select></div><div class="input-group"><label for="d_straight">Ø Ligeud</label><select id="d_straight" class="input-field">${roundOptions}</select></div><div class="input-group"><label for="d_branch">Ø Afgrening</label><select id="d_branch" class="input-field">${roundOptions}</select></div></div>`;
+            } else {
                 if (flowType === 'splitting') {
-                    teeInputsHtml = `<div class="sub-group"><label>Luftmængder</label><div class="input-field-group"><div class="input-group"><label for="q_in">q Ind</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_in" class="input-field" required></div></div><div class="input-group"><label for="q_straight">q Ligeud</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_straight" class="input-field" required></div></div><div class="input-group"><label for="q_branch">q Afgrening</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_branch" class="input-field" required></div></div></div></div><div class="sub-group">${diameterInputs}</div>`;
-                } else { // merging
-                    teeInputsHtml = `<div class="sub-group"><label>Luftmængder</label><div class="input-field-group"><div class="input-group"><label for="q_straight">q Ligeud (Ind)</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_straight" class="input-field" required></div></div><div class="input-group"><label for="q_branch">q Afgrening (Ind)</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_branch" class="input-field" required></div></div></div></div><div class="sub-group">${diameterInputs}</div>`;
+                    teeInputsHtml = `<div class="sub-group"><label>Luftmængder</label><div class="input-field-group"><div class="input-group"><label for="q_in">q Ind</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_in" class="input-field" required></div></div><div class="input-group"><label for="q_straight">q Ligeud</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_straight" class="input-field" required></div></div><div class="input-group"><label for="q_branch">q Afgrening</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_branch" class="input-field" required></div></div></div></div>`;
+                } else {
+                    teeInputsHtml = `<div class="sub-group"><label>Luftmængder</label><div class="input-field-group"><div class="input-group"><label for="q_straight">q Ligeud (Ind)</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_straight" class="input-field" required></div></div><div class="input-group"><label for="q_branch">q Afgrening (Ind)</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="q_branch" class="input-field" required></div></div></div></div>`;
                 }
             }
-            container.innerHTML = teeInputsHtml;
 
-            if (!isSym && !isBullhead) {
+            // 2. DIMENSION FELTER (Rund vs Firkantet)
+            let dimHtml = '';
+            if (isRect) {
+                if (isSym) {
+                    dimHtml = `<div class="input-field-group"><div class="input-group"><label>Højde (alle)</label><select id="h_in" class="input-field">${rectOptions}</select></div><div class="input-group"><label>Bredde (alle)</label><select id="w_in" class="input-field">${rectOptions}</select></div></div>`;
+                } else if (isBullhead) {
+                    const labelCommon = flowType === 'splitting' ? 'Ind' : 'Ud';
+                    dimHtml = `
+                        <div class="input-field-group">
+                            <div class="input-group"><label>H ${labelCommon}</label><select id="h_common" class="input-field">${rectOptions}</select></div>
+                            <div class="input-group"><label>H Gren 1</label><select id="h_in1" class="input-field">${rectOptions}</select></div>
+                            <div class="input-group"><label>H Gren 2</label><select id="h_in2" class="input-field">${rectOptions}</select></div>
+                        </div>
+                        <div class="input-field-group">
+                            <div class="input-group"><label>B ${labelCommon}</label><select id="w_common" class="input-field">${rectOptions}</select></div>
+                            <div class="input-group"><label>B Gren 1</label><select id="w_in1" class="input-field">${rectOptions}</select></div>
+                            <div class="input-group"><label>B Gren 2</label><select id="w_in2" class="input-field">${rectOptions}</select></div>
+                        </div>`;
+                } else {
+                    const labelCommon = flowType === 'splitting' ? 'Ind' : 'Ud';
+                    dimHtml = `
+                        <div class="input-field-group">
+                            <div class="input-group"><label>H ${labelCommon}</label><select id="h_in" class="input-field">${rectOptions}</select></div>
+                            <div class="input-group"><label>H Ligeud</label><select id="h_straight" class="input-field">${rectOptions}</select></div>
+                            <div class="input-group"><label>H Afgrening</label><select id="h_branch" class="input-field">${rectOptions}</select></div>
+                        </div>
+                        <div class="input-field-group">
+                            <div class="input-group"><label>B ${labelCommon}</label><select id="w_in" class="input-field">${rectOptions}</select></div>
+                            <div class="input-group"><label>B Ligeud</label><select id="w_straight" class="input-field">${rectOptions}</select></div>
+                            <div class="input-group"><label>B Afgrening</label><select id="w_branch" class="input-field">${rectOptions}</select></div>
+                        </div>`;
+                }
+            } else {
+                // Rund logik (Eksisterende)
+                dimHtml = isSym ? 
+                    `<div class="input-group"><label>Diameter (alle)</label><select id="d_in" class="input-field">${roundOptions}</select></div>` :
+                    `<div class="input-field-group"><div class="input-group"><label id="label_d_in" for="d_in">Ø Ind/Ud</label><select id="d_in" class="input-field">${roundOptions}</select></div><div class="input-group"><label for="d_straight">Ø Ligeud</label><select id="d_straight" class="input-field">${roundOptions}</select></div><div class="input-group"><label for="d_branch">Ø Afgrening</label><select id="d_branch" class="input-field">${roundOptions}</select></div></div>`;
+            }
+
+            teeInputsHtml += `<div class="sub-group">${dimHtml}</div>`;
+            container.innerHTML = teeInputsHtml;
+            
+            // Juster label-tekst hvis rund asym
+            if (!isSym && !isBullhead && !isRect) {
                 const label = document.getElementById('label_d_in');
                 if (label) label.innerText = (flowType === 'splitting' ? 'Ø Ind' : 'Ø Ud');
             }
@@ -1738,7 +1788,8 @@ export function handleComponentTypeChange() {
         systemComponentInputsContainer.innerHTML = `
             <div class="input-group"><label for="systemFittingType">Vælg type formstykke</label><select id="systemFittingType" class="input-field">
                 <option value="">-- Vælg type --</option>
-                <optgroup label="Bøjninger"><option value="bend_circ">Bøjning, Cirkulær</option><option value="bend_rect">Bøjning, Rektangulær</option></optgroup>
+                <optgroup label="Bøjninger"><option value="bend_circ">Bøjning, Cirkulær</option><option value="bend_rect">Bøjning, Rektangulær</option>
+                </optgroup>
                 <optgroup label="Dimensionsændringer">
                     <option value="expansion">Udvidelse, Cirkulær</option>
                     <option value="contraction">Indsnævring, Cirkulær</option>
@@ -1747,7 +1798,16 @@ export function handleComponentTypeChange() {
                     <option value="transition_rect_round">Overgang, Firkant til Rund</option>
                     <option value="transition_round_rect">Overgang, Rund til Firkant</option>
                 </optgroup>
-                <optgroup label="T-stykker (Cirkulær)"><option value="tee_sym">T-stykke, Symmetrisk</option><option value="tee_asym">T-stykke, Asymmetrisk</option><option value="tee_bullhead">T-stykke (Dobbelt Afgrening)</option></optgroup>
+                <optgroup label="T-stykker (Cirkulær)">
+                    <option value="tee_sym">T-stykke, Symmetrisk</option>
+                    <option value="tee_asym">T-stykke, Asymmetrisk</option>
+                    <option value="tee_bullhead">T-stykke (Dobbelt Afgrening)</option>
+                </optgroup>
+                <optgroup label="T-stykker (Rektangulær)">
+                    <option value="tee_rect_sym">T-stykke, Symmetrisk (Firkantet)</option>
+                    <option value="tee_rect_asym">T-stykke, Asymmetrisk (Firkantet)</option>
+                    <option value="tee_rect_bullhead">T-stykke (Dobb. Afgrening, Firkantet)</option>
+                </optgroup>
             </select></div>
             <div id="systemFittingInputsContainer"></div>`;
 
@@ -1968,52 +2028,86 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                 </div>
                 <div class="input-group"><label for="${id('sys_angle_dim')}">Vinkel (α)</label><input type="text" id="${id('sys_angle_dim')}" class="input-field" value="30"></div>`;
             break;
-        case 'tee_sym':
-        case 'tee_asym': {
-            const isSym = fittingType === 'tee_sym';
-            const diameterInputs = isSym ?
-                `<div class="input-group"><label>Diameter (alle grene)</label><select id="${id('sys_tee_d_in')}" class="input-field">${roundOptions}</select></div>` :
-                `<div class="input-field-group">
-                    <div class="input-group"><label for="${id('sys_tee_d_in')}">Ø Ind/Ud</label><select id="${id('sys_tee_d_in')}" class="input-field">${roundOptions}</select></div>
-                    <div class="input-group"><label for="${id('sys_tee_d_straight')}">Ø Ligeud</label><select id="${id('sys_tee_d_straight')}" class="input-field">${roundOptions}</select></div>
-                    <div class="input-group"><label for="${id('sys_tee_d_branch')}">Ø Afgrening</label><select id="${id('sys_tee_d_branch')}" class="input-field">${roundOptions}</select></div>
-                </div>`;
+case 'tee_sym':
+        case 'tee_asym':
+        case 'tee_rect_sym':
+        case 'tee_rect_asym': {
+            const isSym = fittingType.includes('_sym');
+            const isRect = fittingType.includes('_rect');
+            
+            // Dynamisk valg af inputs baseret på form
+            const dimensionInputs = isRect ? 
+                (isSym ?
+                    `<div class="input-field-group">
+                        <div class="input-group"><label>Højde (alle)</label><select id="${id('sys_tee_h_in')}" class="input-field">${rectOptions}</select></div>
+                        <div class="input-group"><label>Bredde (alle)</label><select id="${id('sys_tee_w_in')}" class="input-field">${rectOptions}</select></div>
+                    </div>` :
+                    `<div class="input-field-group">
+                        <div class="input-group"><label for="${id('sys_tee_h_in')}">H Ind/Ud</label><select id="${id('sys_tee_h_in')}" class="input-field">${rectOptions}</select></div>
+                        <div class="input-group"><label for="${id('sys_tee_h_straight')}">H Ligeud</label><select id="${id('sys_tee_h_straight')}" class="input-field">${rectOptions}</select></div>
+                        <div class="input-group"><label for="${id('sys_tee_h_branch')}">H Afgrening</label><select id="${id('sys_tee_h_branch')}" class="input-field">${rectOptions}</select></div>
+                    </div>
+                    <div class="input-field-group">
+                        <div class="input-group"><label for="${id('sys_tee_w_in')}">B Ind/Ud</label><select id="${id('sys_tee_w_in')}" class="input-field">${rectOptions}</select></div>
+                        <div class="input-group"><label for="${id('sys_tee_w_straight')}">B Ligeud</label><select id="${id('sys_tee_w_straight')}" class="input-field">${rectOptions}</select></div>
+                        <div class="input-group"><label for="${id('sys_tee_w_branch')}">B Afgrening</label><select id="${id('sys_tee_w_branch')}" class="input-field">${rectOptions}</select></div>
+                    </div>`) :
+                (isSym ?
+                    `<div class="input-group"><label>Diameter (alle)</label><select id="${id('sys_tee_d_in')}" class="input-field">${roundOptions}</select></div>` :
+                    `<div class="input-field-group">
+                        <div class="input-group"><label for="${id('sys_tee_d_in')}">Ø Ind/Ud</label><select id="${id('sys_tee_d_in')}" class="input-field">${roundOptions}</select></div>
+                        <div class="input-group"><label for="${id('sys_tee_d_straight')}">Ø Ligeud</label><select id="${id('sys_tee_d_straight')}" class="input-field">${roundOptions}</select></div>
+                        <div class="input-group"><label for="${id('sys_tee_d_branch')}">Ø Afgrening</label><select id="${id('sys_tee_d_branch')}" class="input-field">${roundOptions}</select></div>
+                    </div>`);
 
             inputsHtml = `
                 <div id="${id('teeSpecificInputs')}">
                     <div class="sub-group">
-                        <label>Luftmængder (efterlades felterne tomme deles auto 50/50)</label>
+                        <label>Luftmængder (m³/h)</label>
                         <div class="input-field-group">
                             <div class="input-group"><label for="${id('sys_tee_q_straight')}">q Ligeud</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="${id('sys_tee_q_straight')}" class="input-field" placeholder="auto"></div></div>
                             <div class="input-group"><label for="${id('sys_tee_q_branch')}">q Afgrening</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="${id('sys_tee_q_branch')}" class="input-field" placeholder="auto"></div></div>
                         </div>
                     </div>
-                    <div class="sub-group">${diameterInputs}</div>
-                    ${getOrientationHtml('Afgreningens retning (3D)')}
+                    <div class="sub-group">${dimensionInputs}</div>
+                    ${getOrientationHtml('Retning (3D)')}
                 </div>`;
             break;
         }
         case 'tee_bullhead':
+        case 'tee_rect_bullhead': {
+            const isRect = fittingType.includes('_rect');
+            const dimInputs = isRect ?
+                `<div class="input-field-group">
+                    <div class="input-group"><label for="${id('sys_tee_h_in')}">H Ind</label><select id="${id('sys_tee_h_in')}" class="input-field">${rectOptions}</select></div>
+                    <div class="input-group"><label for="${id('sys_tee_h_out1')}">H Gren 1</label><select id="${id('sys_tee_h_out1')}" class="input-field">${rectOptions}</select></div>
+                    <div class="input-group"><label for="${id('sys_tee_h_out2')}">H Gren 2</label><select id="${id('sys_tee_h_out2')}" class="input-field">${rectOptions}</select></div>
+                </div>
+                <div class="input-field-group">
+                    <div class="input-group"><label for="${id('sys_tee_w_in')}">B Ind</label><select id="${id('sys_tee_w_in')}" class="input-field">${rectOptions}</select></div>
+                    <div class="input-group"><label for="${id('sys_tee_w_out1')}">B Gren 1</label><select id="${id('sys_tee_w_out1')}" class="input-field">${rectOptions}</select></div>
+                    <div class="input-group"><label for="${id('sys_tee_w_out2')}">B Gren 2</label><select id="${id('sys_tee_w_out2')}" class="input-field">${rectOptions}</select></div>
+                </div>` :
+                `<div class="input-field-group">
+                    <div class="input-group"><label for="${id('sys_tee_d_in')}">Ø Ind</label><select id="${id('sys_tee_d_in')}" class="input-field">${roundOptions}</select></div>
+                    <div class="input-group"><label for="${id('sys_tee_d_out1')}">Ø Gren 1</label><select id="${id('sys_tee_d_out1')}" class="input-field">${roundOptions}</select></div>
+                    <div class="input-group"><label for="${id('sys_tee_d_out2')}">Ø Gren 2</label><select id="${id('sys_tee_d_out2')}" class="input-field">${roundOptions}</select></div>
+                </div>`;
+
             inputsHtml = `
                 <div class="sub-group">
-                    <label>Luftmængder (efterlades felterne tomme deles auto 50/50)</label>
+                    <label>Luftmængder (m³/h)</label>
                     <div class="input-field-group">
                         <div class="input-group"><label for="${id('sys_tee_q_out1')}">q Gren 1</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="${id('sys_tee_q_out1')}" class="input-field" placeholder="auto"></div></div>
                         <div class="input-group"><label for="${id('sys_tee_q_out2')}">q Gren 2</label><div class="input-unit-wrapper" data-unit="m³/h"><input type="text" id="${id('sys_tee_q_out2')}" class="input-field" placeholder="auto"></div></div>
                     </div>
                 </div>
-                <div class="sub-group">
-                    <label>Diametre</label>
-                     <div class="input-field-group">
-                        <div class="input-group"><label for="${id('sys_tee_d_in')}">Ø Ind</label><select id="${id('sys_tee_d_in')}" class="input-field">${roundOptions}</select></div>
-                        <div class="input-group"><label for="${id('sys_tee_d_out1')}">Ø Gren 1</label><select id="${id('sys_tee_d_out1')}" class="input-field">${roundOptions}</select></div>
-                        <div class="input-group"><label for="${id('sys_tee_d_out2')}">Ø Gren 2</label><select id="${id('sys_tee_d_out2')}" class="input-field">${roundOptions}</select></div>
-                    </div>
-                </div>
-                    ${getOrientationHtml('Planets retning (3D)')}
-                    `;
+                <div class="sub-group">${dimInputs}</div>
+                ${getOrientationHtml('Retning (3D)')}
+            `;
             break;
-    }
+        }
+        }
 
     const btnAction = isEditMode ? `window.handleValidatedUpdate('${initialData.id}', '${suffix}')` : `window.handleValidatedSubmit(event, '${suffix}')`;
     const btnText = isEditMode ? 'Opdater komponent' : 'Tilføj til system';
@@ -2065,6 +2159,16 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
             if (p.d_branch) setVal(id('sys_tee_d_branch'), p.d_branch);
             if (p.d_out1) setVal(id('sys_tee_d_out1'), p.d_out1);
             if (p.d_out2) setVal(id('sys_tee_d_out2'), p.d_out2);
+            if (p.h_in) setVal(id('sys_tee_h_in'), p.h_in);
+            if (p.w_in) setVal(id('sys_tee_w_in'), p.w_in);
+            if (p.h_straight) setVal(id('sys_tee_h_straight'), p.h_straight);
+            if (p.w_straight) setVal(id('sys_tee_w_straight'), p.w_straight);
+            if (p.h_branch) setVal(id('sys_tee_h_branch'), p.h_branch);
+            if (p.w_branch) setVal(id('sys_tee_w_branch'), p.w_branch);
+            if (p.h_out1) setVal(id('sys_tee_h_out1'), p.h_out1);
+            if (p.w_out1) setVal(id('sys_tee_w_out1'), p.w_out1);
+            if (p.h_out2) setVal(id('sys_tee_h_out2'), p.h_out2);
+            if (p.w_out2) setVal(id('sys_tee_w_out2'), p.w_out2);
             if (p.orientation) {
                 setVal(id('sys_orientation'), p.orientation);
                 window.toggleCustomAngleField(p.orientation, suffix);
@@ -2084,6 +2188,8 @@ export function renderSystemFittingInputs(container = null, initialData = null) 
                 setVal(id('sys_w'), dim.w);
                 setVal(id('sys_h1'), dim.h);
                 setVal(id('sys_w1'), dim.w);
+                setVal(id('sys_tee_h_in'), dim.h);
+                setVal(id('sys_tee_w_in'), dim.w);
             }
 
             if (window.currentParentProps) {
@@ -2356,7 +2462,18 @@ export function handleInlineComponentTypeChange(containerId) {
                     <option value="expansion_rect">Udvidelse, Rektangulær</option>
                     <option value="contraction_rect">Indsnævring, Rektangulær</option>
                     <option value="transition_rect_round">Overgang, Firkant til Rund</option>
-                </optgroup>`;
+                </optgroup>
+                <optgroup label="T-stykker (Rektangulær)">
+                    <option value="tee_rect_sym">T-stykke, Symmetrisk (Firkantet)</option>
+                    <option value="tee_rect_asym">T-stykke, Asymmetrisk (Firkantet)</option>
+                    <option value="tee_rect_bullhead">T-stykke (Dobb. Afgrening, Firkantet)</option>
+                </optgroup>
+                <optgroup label="T-stykker (Cirkulær)">
+                    <option value="tee_sym">T-stykke, Symmetrisk</option>
+                    <option value="tee_asym">T-stykke, Asymmetrisk</option>
+                    <option value="tee_bullhead">T-stykke (Dobbelt Afgrening)</option>
+                </optgroup>`
+                ;
         } else {
             fittingOptionsHtml += `
                 <optgroup label="Bøjninger">
@@ -2371,7 +2488,13 @@ export function handleInlineComponentTypeChange(containerId) {
                     <option value="tee_sym">T-stykke, Symmetrisk</option>
                     <option value="tee_asym">T-stykke, Asymmetrisk</option>
                     <option value="tee_bullhead">T-stykke (Dobbelt Afgrening)</option>
-                </optgroup>`;
+                </optgroup>
+                    <optgroup label="T-stykker (Rektangulær)">
+                    <option value="tee_rect_sym">T-stykke, Symmetrisk (Firkantet)</option>
+                    <option value="tee_rect_asym">T-stykke, Asymmetrisk (Firkantet)</option>
+                    <option value="tee_rect_bullhead">T-stykke (Dobb. Afgrening, Firkantet)</option>
+                </optgroup>`
+                ;
         }
         
         fittingOptionsHtml += `
