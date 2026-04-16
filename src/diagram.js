@@ -295,7 +295,6 @@ let labelX, labelY, labelZ;
 let pdfPlaneMesh = null; // Holder styr på 3D-planet med arkitekttegningen
 let pdfTextureCanvas = null; // Gemmer PDF-billedet lokalt
 
-// --- VISUEL FOKUS MODE (HOVER LOGIK) ---
 // --- VISUEL FOKUS MODE (HOVER & PORT LOGIK) ---
 window.highlight3DComponent = (id, port) => {
     if (!scene) return;
@@ -1563,13 +1562,15 @@ export function renderDiagram(keepControls = false) {
             nextPos.add(currentDir.clone().multiplyScalar(moveDist));
             midWay.copy(currentPos).add(currentDir.clone().multiplyScalar(moveDist / 2));
         }
-else if (pType.includes('tee')) {
-            const isBullhead = pType === 'tee_bullhead';
+        else if (pType.includes('tee')) {
+            const isBullhead = pType.includes('bullhead');
+            const isRectTee = pType.includes('_rect');
+            const p = comp.properties || {};
             
             // =========================================================
             // THE UNIVERSAL ROTATION CORE
             // =========================================================
-            const orientation = comp.properties?.orientation || 'Left';
+            const orientation = p.orientation || 'Left';
             const rightDir = currentDir.clone().cross(nextUp).normalize();
             let axis = nextUp.clone();
             let turnSign = 1;
@@ -1579,7 +1580,7 @@ else if (pType.includes('tee')) {
             else if (orientation === 'Up') { axis = rightDir.clone(); turnSign = 1; }
             else if (orientation === 'Down') { axis = rightDir.clone(); turnSign = -1; }
             else if (orientation === 'Custom' || orientation === 'Andet') {
-                const customAngleRad = THREE.MathUtils.degToRad(parseFloat(comp.properties?.orientationAngle || 0));
+                const customAngleRad = THREE.MathUtils.degToRad(parseFloat(p.orientationAngle || 0));
                 const turnTowards = nextUp.clone().applyAxisAngle(currentDir, customAngleRad).normalize();
                 axis = currentDir.clone().cross(turnTowards).normalize();
                 turnSign = -1;
@@ -1588,25 +1589,104 @@ else if (pType.includes('tee')) {
 
             const branchTurn = THREE.MathUtils.degToRad(90);
 
-            if (isBullhead) {
-                const dIn = (comp.properties?.d_in || diameterMm) / 1000 * PIXELS_PER_METER;
-                const dOut1 = (comp.properties?.d_out1 || diameterMm) / 1000 * PIXELS_PER_METER;
-                const dOut2 = (comp.properties?.d_out2 || diameterMm) / 1000 * PIXELS_PER_METER;
+            // --- FÆLLES FUNKTION TIL AT TEGNE PILE OG INFO (Nu tilgængelig for alle!) ---
+            const drawOpenEnd = (pos, dir, portName = null) => {
+                const arrowLength = 50;
+                const arrowDir = isExhaust ? dir.clone().negate() : dir;
+                const arrowPos = isExhaust ? pos.clone().add(dir.clone().multiplyScalar(arrowLength)) : pos;
 
-                moveDist = Math.max(dIn * 2, 60);
+                const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowPos, arrowLength, 0x00E4FF, 15, 10);
+                scene.add(arrowHelper);
+
+                let outFlow = 0;
+                if (portName && comp.state?.airflow_out) {
+                    outFlow = comp.state.airflow_out[portName];
+                } else {
+                    outFlow = comp.state?.airflow_out?.outlet || comp.state?.airflow_out?.outlet_straight || comp.state?.airflow_out?.outlet_branch || comp.state?.airflow_in || 0;
+                }
+
+                const flow = Math.round(outFlow);
+
+                let tOutRaw = 20;
+                if (portName && comp.state?.temperature_out) {
+                    tOutRaw = comp.state.temperature_out[portName];
+                } else {
+                    tOutRaw = comp.state?.temperature_out?.outlet || comp.state?.temperature_out?.outlet_straight || comp.state?.temperature_in || 20;
+                }
+                const temp = parseFloat(tOutRaw);
+
+                const endText = isExhaust ? 'Udsugning' : 'Indblæsning';
+                const safePortName = portName || 'outlet';
+
+                const div = document.createElement('div');
+                div.className = 'diagram-label end-label';
+                div.style.position = 'absolute';
+                div.style.color = '#00E4FF';
+                div.style.fontWeight = 'bold';
+                div.style.background = 'rgba(0,0,0,0.7)';
+                div.style.padding = '4px 8px';
+                div.style.borderRadius = '6px';
+                div.style.border = '1px solid #00E4FF';
+                div.style.fontSize = '11px';
+                div.style.pointerEvents = 'none';
+                div.style.textAlign = 'center';
+                
+                const isTerminal = comp.type === 'terminalUnit';
+                const addButtonHtml = (isDesktop && !isTerminal) 
+                    ? `<br><button class="add-btn-3d" 
+                            style="pointer-events: auto; cursor: pointer; margin-top: 6px; padding: 4px 8px; font-size: 14px; background: #00A4E0; color: #fff; border: none; border-radius: 4px; font-weight: bold; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;" 
+                            onpointerdown="event.stopPropagation();"
+                            onpointerup="event.stopPropagation();"
+                            onclick="event.stopPropagation(); window.showAddForm('${comp.id}', '${safePortName}');">
+                        +
+                    </button>`
+                    : '';
+                
+                let endTextLines = [endText];
+                if (diagramSettings.labels.flow) endTextLines.push(`${flow} m³/h`);
+                if (diagramSettings.labels.temp) endTextLines.push(`${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`);
+
+                div.innerHTML = `
+                    ${endTextLines.join('<br>')}
+                    ${addButtonHtml}
+                `;
+                labelsContainer.appendChild(div);
+                labelsMap.set(div, pos.clone().add(dir.clone().multiplyScalar(arrowLength + 20)));
+            };
+
+            if (isBullhead) {
+                let wIn, hIn, wOut1, hOut1, wOut2, hOut2;
+                let dIn, dOut1, dOut2;
+
+                if (isRectTee) {
+                    wIn = (p.w_in || widthMm) / 1000 * PIXELS_PER_METER;
+                    hIn = (p.h_in || heightMm) / 1000 * PIXELS_PER_METER;
+                    wOut1 = (p.w_out1 || widthMm) / 1000 * PIXELS_PER_METER;
+                    hOut1 = (p.h_out1 || heightMm) / 1000 * PIXELS_PER_METER;
+                    wOut2 = (p.w_out2 || widthMm) / 1000 * PIXELS_PER_METER;
+                    hOut2 = (p.h_out2 || heightMm) / 1000 * PIXELS_PER_METER;
+                    moveDist = Math.max(wIn * 2, 60);
+                } else {
+                    dIn = (p.d_in || diameterMm) / 1000 * PIXELS_PER_METER;
+                    dOut1 = (p.d_out1 || diameterMm) / 1000 * PIXELS_PER_METER;
+                    dOut2 = (p.d_out2 || diameterMm) / 1000 * PIXELS_PER_METER;
+                    moveDist = Math.max(dIn * 2, 60);
+                }
+                
                 const stubLen = moveDist / 2;
 
                 // --- Indløb (Bullhead) ---
-                let gIn = new THREE.CylinderGeometry(dIn/2, dIn/2, stubLen, 32);
+                let gIn = isRectTee ? new THREE.BoxGeometry(wIn, stubLen, hIn) : new THREE.CylinderGeometry(dIn/2, dIn/2, stubLen, 32);
                 gIn.translate(0, stubLen/2, 0);
                 gIn.rotateX(Math.PI/2);
                 const meshIn = new THREE.Mesh(gIn, material);
-                meshIn.userData = { compId: comp.id, port: 'inlet' }; // RETTET: "drawTree3D" fjernet og port tilføjet
+                meshIn.userData = { compId: comp.id, port: 'inlet' };
                 meshIn.position.copy(currentPos);
                 meshIn.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
                 scene.add(meshIn);
                 
-                if (!isRect) addInsulation(meshIn, 'straight_cyl', {r: dIn/2, len: stubLen});
+                if (isRectTee) addInsulation(meshIn, 'straight_box', {w: wIn, h: hIn, len: stubLen});
+                else addInsulation(meshIn, 'straight_cyl', {r: dIn/2, len: stubLen});
 
                 const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
 
@@ -1617,7 +1697,7 @@ else if (pType.includes('tee')) {
                 const path2Up = nextUp.clone().applyAxisAngle(axis, -branchTurn * turnSign).normalize();
 
                 // --- Udløb 1 (Gren 1) ---
-                let gB1 = new THREE.CylinderGeometry(dOut1/2, dOut1/2, stubLen, 32);
+                let gB1 = isRectTee ? new THREE.BoxGeometry(wOut1, stubLen, hOut1) : new THREE.CylinderGeometry(dOut1/2, dOut1/2, stubLen, 32);
                 gB1.translate(0, stubLen/2, 0);
                 gB1.rotateX(Math.PI/2);
                 const meshB1 = new THREE.Mesh(gB1, material);
@@ -1626,10 +1706,11 @@ else if (pType.includes('tee')) {
                 meshB1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path1Dir);
                 scene.add(meshB1);
                 
-                if (!isRect) addInsulation(meshB1, 'straight_cyl', {r: dOut1/2, len: stubLen});
+                if (isRectTee) addInsulation(meshB1, 'straight_box', {w: wOut1, h: hOut1, len: stubLen});
+                else addInsulation(meshB1, 'straight_cyl', {r: dOut1/2, len: stubLen});
 
                 // --- Udløb 2 (Gren 2) ---
-                let gB2 = new THREE.CylinderGeometry(dOut2/2, dOut2/2, stubLen, 32);
+                let gB2 = isRectTee ? new THREE.BoxGeometry(wOut2, stubLen, hOut2) : new THREE.CylinderGeometry(dOut2/2, dOut2/2, stubLen, 32);
                 gB2.translate(0, stubLen/2, 0);
                 gB2.rotateX(Math.PI/2);
                 const meshB2 = new THREE.Mesh(gB2, material);
@@ -1638,73 +1719,10 @@ else if (pType.includes('tee')) {
                 meshB2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), path2Dir);
                 scene.add(meshB2);
                 
-                if (!isRect) addInsulation(meshB2, 'straight_cyl', {r: dOut2/2, len: stubLen});
+                if (isRectTee) addInsulation(meshB2, 'straight_box', {w: wOut2, h: hOut2, len: stubLen});
+                else addInsulation(meshB2, 'straight_cyl', {r: dOut2/2, len: stubLen});
 
                 midWay.copy(midPos);
-
-                const drawOpenEnd = (pos, dir, portName = null) => {
-                    const arrowLength = 50;
-                    const arrowDir = isExhaust ? dir.clone().negate() : dir;
-                    const arrowPos = isExhaust ? pos.clone().add(dir.clone().multiplyScalar(arrowLength)) : pos;
-
-                    const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowPos, arrowLength, 0x00E4FF, 15, 10);
-                    scene.add(arrowHelper);
-
-                    let outFlow = 0;
-                    if (portName && comp.state?.airflow_out) {
-                        outFlow = comp.state.airflow_out[portName];
-                    } else {
-                        outFlow = comp.state?.airflow_out?.outlet || comp.state?.airflow_out?.outlet_straight || comp.state?.airflow_out?.outlet_branch || comp.state?.airflow_in || 0;
-                    }
-
-                    const flow = Math.round(outFlow);
-
-                    let tOutRaw = 20;
-                    if (portName && comp.state?.temperature_out) {
-                        tOutRaw = comp.state.temperature_out[portName];
-                    } else {
-                        tOutRaw = comp.state?.temperature_out?.outlet || comp.state?.temperature_out?.outlet_straight || comp.state?.temperature_in || 20;
-                    }
-                    const temp = parseFloat(tOutRaw);
-
-                    const endText = isExhaust ? 'Udsugning' : 'Indblæsning';
-                    const safePortName = portName || 'outlet';
-
-                    const div = document.createElement('div');
-                    div.className = 'diagram-label end-label';
-                    div.style.position = 'absolute';
-                    div.style.color = '#00E4FF';
-                    div.style.fontWeight = 'bold';
-                    div.style.background = 'rgba(0,0,0,0.7)';
-                    div.style.padding = '4px 8px';
-                    div.style.borderRadius = '6px';
-                    div.style.border = '1px solid #00E4FF';
-                    div.style.fontSize = '11px';
-                    div.style.pointerEvents = 'none';
-                    div.style.textAlign = 'center';
-                    
-                    const isTerminal = comp.type === 'terminalUnit';
-                    const addButtonHtml = (isDesktop && !isTerminal) 
-                        ? `<br><button class="add-btn-3d" 
-                                style="pointer-events: auto; cursor: pointer; margin-top: 6px; padding: 4px 8px; font-size: 14px; background: #00A4E0; color: #fff; border: none; border-radius: 4px; font-weight: bold; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;" 
-                                onpointerdown="event.stopPropagation();"
-                                onpointerup="event.stopPropagation();"
-                                onclick="event.stopPropagation(); window.showAddForm('${comp.id}', '${safePortName}');">
-                            +
-                        </button>`
-                        : '';
-                    
-                    let endTextLines = [endText];
-                    if (diagramSettings.labels.flow) endTextLines.push(`${flow} m³/h`);
-                    if (diagramSettings.labels.temp) endTextLines.push(`${!isNaN(temp) ? temp.toFixed(1) + ' °C' : '-'}`);
-
-                    div.innerHTML = `
-                        ${endTextLines.join('<br>')}
-                        ${addButtonHtml}
-                    `;
-                    labelsContainer.appendChild(div);
-                    labelsMap.set(div, pos.clone().add(dir.clone().multiplyScalar(arrowLength + 20)));
-                };
 
                 const end1Pos = midPos.clone().add(path1Dir.clone().multiplyScalar(stubLen));
                 const c1 = comp.children && comp.children.outlet_path1 && comp.children.outlet_path1[0];
@@ -1719,58 +1737,111 @@ else if (pType.includes('tee')) {
                 drawLabels(comp, midWay, isIncluded);
                 bMin.min(currentPos); bMin.min(end1Pos); bMin.min(end2Pos);
                 bMax.max(currentPos); bMax.max(end1Pos); bMax.max(end2Pos);
-                return;
+                
             } else {
-                // --- STANDARD T-STYKKE ---
+                // --- STANDARD T-STYKKE (Normalt / Asym / Rektangulær) ---
                 branchDir = currentDir.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
                 branchUp = nextUp.clone().applyAxisAngle(axis, branchTurn * turnSign).normalize();
 
-                moveDist = Math.max(radius3D * 4, width3D * 2, 60);
-                const stubLen = moveDist / 2;
-                const branchRadius = ((comp.properties?.d_branch || diameterMm) / 1000) * PIXELS_PER_METER / 2;
-                const branchWidth = ((comp.properties?.w_branch || widthMm) / 1000) * PIXELS_PER_METER;
-                const branchHeight = ((comp.properties?.h_branch || heightMm) / 1000) * PIXELS_PER_METER;
-                const isBranchRect = comp.properties?.w_branch !== undefined || (isRect && comp.properties?.d_branch === undefined);
+                let wIn, hIn, wStraight, hStraight, wBranch, hBranch;
+                let branchRadius;
 
-                // --- Udløb (Ligeud) ---
-                let gS;
-                if (isRect) {
-                    gS = new THREE.BoxGeometry(width3D, moveDist, height3D);
+                if (isRectTee) {
+                    wIn = (p.w_in || widthMm) / 1000 * PIXELS_PER_METER;
+                    hIn = (p.h_in || heightMm) / 1000 * PIXELS_PER_METER;
+                    wStraight = (p.w_straight || widthMm) / 1000 * PIXELS_PER_METER;
+                    hStraight = (p.h_straight || heightMm) / 1000 * PIXELS_PER_METER;
+                    wBranch = (p.w_branch || widthMm) / 1000 * PIXELS_PER_METER;
+                    hBranch = (p.h_branch || heightMm) / 1000 * PIXELS_PER_METER;
+                    moveDist = Math.max(wIn * 2, wStraight * 2, 60);
                 } else {
-                    gS = new THREE.CylinderGeometry(radius3D, radius3D, moveDist, 32);
+                    moveDist = Math.max(radius3D * 4, width3D * 2, 60);
+                    branchRadius = ((p.d_branch || diameterMm) / 1000) * PIXELS_PER_METER / 2;
                 }
-                gS.translate(0, moveDist / 2, 0);
-                gS.rotateX(Math.PI / 2);
-                const meshS = new THREE.Mesh(gS, material);
-                meshS.userData = { compId: comp.id, port: 'outlet_straight' }; // RETTET: Ren port tildeling
-                meshS.position.copy(currentPos);
-                meshS.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
-                scene.add(meshS);
                 
-                if (isRect) addInsulation(meshS, 'straight_box', {w: width3D, h: height3D, len: moveDist});
-                else addInsulation(meshS, 'straight_cyl', {r: radius3D, len: moveDist});
+                const stubLen = moveDist / 2;
+
+                // --- Udløb (Ligeud, udgør også Hovedkrop) ---
+                if (isRectTee) {
+                    // For rektangulære tegner vi Indløbs-kassen og Ligeud-kassen separat for 100% visuel præcision
+                    let gIn = new THREE.BoxGeometry(wIn, stubLen, hIn);
+                    gIn.translate(0, stubLen / 2, 0);
+                    gIn.rotateX(Math.PI / 2);
+                    const meshIn = new THREE.Mesh(gIn, material);
+                    meshIn.userData = { compId: comp.id, port: 'inlet' };
+                    meshIn.position.copy(currentPos);
+                    meshIn.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
+                    scene.add(meshIn);
+                    addInsulation(meshIn, 'straight_box', {w: wIn, h: hIn, len: stubLen});
+
+                    const midPosS = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
+                    
+                    let gS = new THREE.BoxGeometry(wStraight, stubLen, hStraight);
+                    gS.translate(0, stubLen / 2, 0);
+                    gS.rotateX(Math.PI / 2);
+                    const meshS = new THREE.Mesh(gS, material);
+                    meshS.userData = { compId: comp.id, port: 'outlet_straight' };
+                    meshS.position.copy(midPosS);
+                    meshS.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
+                    scene.add(meshS);
+                    addInsulation(meshS, 'straight_box', {w: wStraight, h: hStraight, len: stubLen});
+                } else {
+                    let gS = isRect ? new THREE.BoxGeometry(width3D, moveDist, height3D) : new THREE.CylinderGeometry(radius3D, radius3D, moveDist, 32);
+                    gS.translate(0, moveDist / 2, 0);
+                    gS.rotateX(Math.PI / 2);
+                    const meshS = new THREE.Mesh(gS, material);
+                    meshS.userData = { compId: comp.id, port: 'outlet_straight' };
+                    meshS.position.copy(currentPos);
+                    meshS.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), currentDir);
+                    scene.add(meshS);
+                    
+                    if (isRect) addInsulation(meshS, 'straight_box', {w: width3D, h: height3D, len: moveDist});
+                    else addInsulation(meshS, 'straight_cyl', {r: radius3D, len: moveDist});
+                }
 
                 // --- Udløb (Afgrening) ---
                 const midPos = currentPos.clone().add(currentDir.clone().multiplyScalar(stubLen));
                 let gB;
-                if (isBranchRect) {
-                    gB = new THREE.BoxGeometry(branchWidth, stubLen, branchHeight);
+                if (isRectTee || (isRect && p.d_branch === undefined)) {
+                    const bw = isRectTee ? wBranch : width3D;
+                    const bh = isRectTee ? hBranch : height3D;
+                    gB = new THREE.BoxGeometry(bw, stubLen, bh);
+                    gB.translate(0, stubLen / 2, 0);
+                    gB.rotateX(Math.PI / 2);
+                    const meshB = new THREE.Mesh(gB, material);
+                    meshB.userData = { compId: comp.id, port: 'outlet_branch' };
+                    meshB.position.copy(midPos);
+                    meshB.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), branchDir);
+                    scene.add(meshB);
+                    addInsulation(meshB, 'straight_box', {w: bw, h: bh, len: stubLen});
                 } else {
                     gB = new THREE.CylinderGeometry(branchRadius, branchRadius, stubLen, 32);
+                    gB.translate(0, stubLen / 2, 0);
+                    gB.rotateX(Math.PI / 2);
+                    const meshB = new THREE.Mesh(gB, material);
+                    meshB.userData = { compId: comp.id, port: 'outlet_branch' };
+                    meshB.position.copy(midPos);
+                    meshB.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), branchDir);
+                    scene.add(meshB);
+                    addInsulation(meshB, 'straight_cyl', {r: branchRadius, len: stubLen});
                 }
-                gB.translate(0, stubLen / 2, 0);
-                gB.rotateX(Math.PI / 2);
-                const meshB = new THREE.Mesh(gB, material);
-                meshB.userData = { compId: comp.id, port: 'outlet_branch' }; // RETTET: Ren port tildeling, mesh findes nu
-                meshB.position.copy(midPos);
-                meshB.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), branchDir);
-                scene.add(meshB);
-                
-                if (isBranchRect) addInsulation(meshB, 'straight_box', {w: branchWidth, h: branchHeight, len: stubLen});
-                else addInsulation(meshB, 'straight_cyl', {r: branchRadius, len: stubLen});
 
                 nextPos.add(currentDir.clone().multiplyScalar(moveDist));
                 midWay.copy(midPos);
+
+                const branchStart = midPos.clone().add(branchDir.clone().multiplyScalar(stubLen));
+
+                const sc = comp.children && comp.children.outlet_straight && comp.children.outlet_straight[0];
+                if (sc) drawTree3D(sc, nextPos, nextDir, nextUp);
+                else drawOpenEnd(nextPos, nextDir, 'outlet_straight');
+
+                const bc = comp.children && comp.children.outlet_branch && comp.children.outlet_branch[0];
+                if (bc) drawTree3D(bc, branchStart, branchDir, branchUp);
+                else drawOpenEnd(branchStart, branchDir, 'outlet_branch');
+
+                drawLabels(comp, midWay, isIncluded);
+                bMin.min(currentPos); bMin.min(nextPos); bMin.min(branchStart);
+                bMax.max(currentPos); bMax.max(nextPos); bMax.max(branchStart);
             }
         }
 

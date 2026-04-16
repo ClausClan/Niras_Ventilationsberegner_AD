@@ -412,51 +412,80 @@ function handleFittingCalculation(event) {
         const type = document.getElementById('fittingType').value;
         const globalFlowType = document.querySelector('input[name="fitFlowType"]:checked').value;
 
-        if (type.startsWith('tee')) {
-            const isBullhead = type === 'tee_bullhead';
-            const isSym = type === 'tee_sym';
+if (type.startsWith('tee')) {
+                const isBullhead = type.includes('bullhead');
+                const isSym = type.includes('_sym');
+                const isRect = type.includes('_rect');
+                const flowType = document.querySelector('input[name="fitTeeFlowType"]:checked').value;
 
-            if (isBullhead) {
-                const flowType = document.querySelector('input[name="fitTeeFlowType"]:checked').value;
-                if (flowType === 'splitting') {
-                    const q_in = parseLocalFloat(document.getElementById('q_in').value), q_out1 = parseLocalFloat(document.getElementById('q_out1').value), q_out2 = parseLocalFloat(document.getElementById('q_out2').value);
-                    if (Math.abs(q_in - (q_out1 + q_out2)) > 1) throw new Error("Luftmængderne stemmer ikke overens (Ind ≈ Ud 1 + Ud 2).");
-                    const d_in = parseLocalFloat(document.getElementById('d_in').value), d_out1 = parseLocalFloat(document.getElementById('d_out1').value), d_out2 = parseLocalFloat(document.getElementById('d_out2').value);
-                    if (isNaN(d_in) || isNaN(d_out1) || isNaN(d_out2)) throw new Error("Ugyldige diametre.");
-                    const results = physics.calculateBullheadTeeLoss({ q_in, q_out1, q_out2 }, { d_in, d_out1, d_out2 }, RHO);
-                    addFitting({ id: Date.now(), name: `Dobbelt Afgr. (Ud 1)`, airflow: q_out1, pressureLoss: results.loss1, details: results.details1, type: 'tee' });
-                    addFitting({ id: Date.now() + 1, name: `Dobbelt Afgr. (Ud 2)`, airflow: q_out2, pressureLoss: results.loss2, details: results.details2, type: 'tee' });
-                } else { // merging
-                    const q_in1 = parseLocalFloat(document.getElementById('q_in1').value), q_in2 = parseLocalFloat(document.getElementById('q_in2').value);
-                    const d_common = parseLocalFloat(document.getElementById('d_common').value), d_in1 = parseLocalFloat(document.getElementById('d_in1').value), d_in2 = parseLocalFloat(document.getElementById('d_in2').value);
-                    const results = physics.calculateConvergingBullheadTeeLoss({ q_in1, q_in2 }, { d_in1, d_in2, d_common }, RHO);
-                    addFitting({ id: Date.now(), name: `Dobbelt Afgr. (Ind 1)`, airflow: q_in1, pressureLoss: results.loss1, details: results.details1, type: 'tee' });
-                    addFitting({ id: Date.now() + 1, name: `Dobbelt Afgr. (Ind 2)`, airflow: q_in2, pressureLoss: results.loss2, details: results.details2, type: 'tee' });
+                // Hjælpefunktion til at læse værdier sikkert uden at crashe
+                const getVal = (id) => {
+                    const el = document.getElementById(id);
+                    return el ? parseLocalFloat(el.value) : 0;
+                };
+
+                // Bygger det korrekte dimensionsobjekt afhængig af formen
+                const getDim = (idBase) => {
+                    if (isRect) {
+                        return { shape: 'rect', h: getVal('h_' + idBase), w: getVal('w_' + idBase) };
+                    } else {
+                        // FIX: Nu afleverer vi et objekt, som fysik-motoren forstår
+                        return { shape: 'round', d: getVal('d_' + idBase) }; 
+                    }
+                };
+
+                if (isBullhead) {
+                    if (flowType === 'splitting') {
+                        const q_in = getVal('q_in'), q_out1 = getVal('q_out1'), q_out2 = getVal('q_out2');
+                        if (Math.abs(q_in - (q_out1 + q_out2)) > 1) throw new Error("Luftmængderne stemmer ikke overens (Ind ≈ Ud 1 + Ud 2).");
+                        
+                        const dim_in = isRect ? getDim('common') : getDim('in');
+                        const dim_out1 = isRect ? getDim('in1') : getDim('out1');
+                        const dim_out2 = isRect ? getDim('in2') : getDim('out2');
+
+                        const results = physics.calculateBullheadTeeLoss({ q_in, q_out1, q_out2 }, { in: dim_in, out1: dim_out1, out2: dim_out2 }, RHO);
+                        const nBase = isRect ? 'Dobbelt Afgr. Rekt.' : 'Dobbelt Afgr.';
+                        addFitting({ id: Date.now(), name: `${nBase} (Ud 1)`, airflow: q_out1, pressureLoss: results.loss1, details: results.details1, type: 'tee' });
+                        addFitting({ id: Date.now() + 1, name: `${nBase} (Ud 2)`, airflow: q_out2, pressureLoss: results.loss2, details: results.details2, type: 'tee' });
+                    } else { // merging
+                        const q_in1 = getVal('q_in1'), q_in2 = getVal('q_in2');
+                        
+                        const dim_common = isRect ? getDim('common') : getDim('common');
+                        const dim_in1 = isRect ? getDim('in1') : getDim('in1');
+                        const dim_in2 = isRect ? getDim('in2') : getDim('in2');
+
+                        const results = physics.calculateConvergingBullheadTeeLoss({ q_in1, q_in2 }, { common: dim_common, in1: dim_in1, in2: dim_in2 }, RHO);
+                        const nBase = isRect ? 'Dobbelt Afgr. Rekt.' : 'Dobbelt Afgr.';
+                        addFitting({ id: Date.now(), name: `${nBase} (Ind 1)`, airflow: q_in1, pressureLoss: results.loss1, details: results.details1, type: 'tee' });
+                        addFitting({ id: Date.now() + 1, name: `${nBase} (Ind 2)`, airflow: q_in2, pressureLoss: results.loss2, details: results.details2, type: 'tee' });
+                    }
+                } else { // Standard Tees
+                    if (flowType === 'splitting') {
+                        const q_in = getVal('q_in'), q_straight = getVal('q_straight'), q_branch = getVal('q_branch');
+                        if (Math.abs(q_in - (q_straight + q_branch)) > 1) throw new Error("Luftmængderne stemmer ikke overens (Ind ≈ Ligeud + Afgrening).");
+                        
+                        const dim_in = getDim('in');
+                        const dim_straight = isSym ? getDim('in') : getDim('straight');
+                        const dim_branch = isSym ? getDim('in') : getDim('branch');
+
+                        const results = physics.calculateTeePressureLoss({ q_in, q_straight, q_branch }, { in: dim_in, straight: dim_straight, branch: dim_branch }, RHO);
+                        const name_base = isSym ? (isRect ? 'T-stykke Rekt. Sym.' : 'T-stykke Sym.') : (isRect ? 'T-stykke Rekt. Asym.' : 'T-stykke Asym.');
+                        addFitting({ id: Date.now(), name: `${name_base} (Ligeud)`, airflow: q_straight, pressureLoss: results.loss_straight, details: results.details_straight, type: 'tee' });
+                        addFitting({ id: Date.now() + 1, name: `${name_base} (Afgrening)`, airflow: q_branch, pressureLoss: results.loss_branch, details: results.details_branch, type: 'tee' });
+                    } else { // merging
+                        const q_straight = getVal('q_straight'), q_branch = getVal('q_branch');
+                        
+                        const dim_common = getDim('in');
+                        const dim_straight = isSym ? getDim('in') : getDim('straight');
+                        const dim_branch = isSym ? getDim('in') : getDim('branch');
+
+                        const results = physics.calculateConvergingTeePressureLoss({ q_straight, q_branch }, { common: dim_common, straight: dim_straight, branch: dim_branch }, RHO);
+                        const name_base = isSym ? (isRect ? 'T-stykke Udsugning Rekt. Sym.' : 'T-stykke Udsugning Sym.') : (isRect ? 'T-stykke Udsugning Rekt. Asym.' : 'T-stykke Udsugning Asym.');
+                        addFitting({ id: Date.now(), name: `${name_base} (fra Ligeud)`, airflow: q_straight, pressureLoss: results.loss_straight, details: results.details_straight, type: 'tee' });
+                        addFitting({ id: Date.now() + 1, name: `${name_base} (fra Afgrening)`, airflow: q_branch, pressureLoss: results.loss_branch, details: results.details_branch, type: 'tee' });
+                    }
                 }
-            } else { // Standard Tees
-                const flowType = document.querySelector('input[name="fitTeeFlowType"]:checked').value;
-                if (flowType === 'splitting') {
-                    const q_in = parseLocalFloat(document.getElementById('q_in').value), q_straight = parseLocalFloat(document.getElementById('q_straight').value), q_branch = parseLocalFloat(document.getElementById('q_branch').value);
-                    if (Math.abs(q_in - (q_straight + q_branch)) > 1) throw new Error("Luftmængderne stemmer ikke overens (Ind ≈ Ligeud + Afgrening).");
-                    const d_in = parseLocalFloat(document.getElementById('d_in').value);
-                    const d_straight = isSym ? d_in : parseLocalFloat(document.getElementById('d_straight').value);
-                    const d_branch = isSym ? d_in : parseLocalFloat(document.getElementById('d_branch').value);
-                    const results = physics.calculateTeePressureLoss({ q_in, q_straight, q_branch }, { d_in, d_straight, d_branch }, RHO);
-                    const name_base = isSym ? `T-stykke Sym. Ø${d_in}` : `T-stykke Asym.`;
-                    addFitting({ id: Date.now(), name: `${name_base} (Ligeud)`, airflow: q_straight, pressureLoss: results.loss_straight, details: results.details_straight, type: 'tee' });
-                    addFitting({ id: Date.now() + 1, name: `${name_base} (Afgrening)`, airflow: q_branch, pressureLoss: results.loss_branch, details: results.details_branch, type: 'tee' });
-                } else { // merging
-                    const q_straight = parseLocalFloat(document.getElementById('q_straight').value), q_branch = parseLocalFloat(document.getElementById('q_branch').value);
-                    const d_common = parseLocalFloat(document.getElementById('d_in').value);
-                    const d_straight = isSym ? d_common : parseLocalFloat(document.getElementById('d_straight').value);
-                    const d_branch = isSym ? d_common : parseLocalFloat(document.getElementById('d_branch').value);
-                    const results = physics.calculateConvergingTeePressureLoss({ q_straight, q_branch }, { d_common, d_straight, d_branch }, RHO);
-                    const name_base = isSym ? `T-stykke Udsugning Sym. Ø${d_common}` : `T-stykke Udsugning Asym.`;
-                    addFitting({ id: Date.now(), name: `${name_base} (fra Ligeud)`, airflow: q_straight, pressureLoss: results.loss_straight, details: results.details_straight, type: 'tee' });
-                    addFitting({ id: Date.now() + 1, name: `${name_base} (fra Afgrening)`, airflow: q_branch, pressureLoss: results.loss_branch, details: results.details_branch, type: 'tee' });
-                }
-            }
-        } else {
+            } else {
             // Standard Fittings
             const q_m3h = parseLocalFloat(document.getElementById('fit_airflow').value);
             if (isNaN(q_m3h) || q_m3h <= 0) throw new Error("Ugyldig luftmængde.");
@@ -844,30 +873,54 @@ function getFittingData(suffix, typeOverride = null) {
         }
         case 'tee_sym':
         case 'tee_asym':
-        case 'tee_bullhead': {
-            const isSym = fittingType === 'tee_sym';
-            const isBullhead = fittingType === 'tee_bullhead';
+        case 'tee_bullhead':
+        case 'tee_rect_sym':
+        case 'tee_rect_asym':
+        case 'tee_rect_bullhead': {
+            const isSym = fittingType.includes('_sym');
+            const isBullhead = fittingType.includes('bullhead');
+            const isRect = fittingType.includes('_rect');
 
             if (isBullhead) {
-                properties.d_in = f('sys_tee_d_in');
-                properties.d_out1 = f('sys_tee_d_out1');
-                properties.d_out2 = f('sys_tee_d_out2');
-                properties.q_out1 = f('sys_tee_q_out1');
-                properties.q_out2 = f('sys_tee_q_out2');
-
-                name = `Dobbelt T-stykke (Bullhead)`;
-                details = `Ind: Ø${properties.d_in} -> Afgr 1: Ø${properties.d_out1}, Afgr 2: Ø${properties.d_out2}`;
-                rootProps = { shape: 'circular', diameter: properties.d_in };
+                if (isRect) {
+                    properties.h_in = f('sys_tee_h_in'); properties.w_in = f('sys_tee_w_in');
+                    properties.h_out1 = f('sys_tee_h_out1'); properties.w_out1 = f('sys_tee_w_out1');
+                    properties.h_out2 = f('sys_tee_h_out2'); properties.w_out2 = f('sys_tee_w_out2');
+                    properties.q_out1 = f('sys_tee_q_out1'); properties.q_out2 = f('sys_tee_q_out2');
+                    name = `Dobbelt T-stykke Rekt. (Bullhead)`;
+                    details = `Ind: ${properties.h_in}x${properties.w_in} -> Afgr 1: ${properties.h_out1}x${properties.w_out1}, Afgr 2: ${properties.h_out2}x${properties.w_out2}`;
+                    rootProps = { shape: 'rectangular', height: properties.h_in, width: properties.w_in };
+                } else {
+                    properties.d_in = f('sys_tee_d_in');
+                    properties.d_out1 = f('sys_tee_d_out1');
+                    properties.d_out2 = f('sys_tee_d_out2');
+                    properties.q_out1 = f('sys_tee_q_out1');
+                    properties.q_out2 = f('sys_tee_q_out2');
+                    name = `Dobbelt T-stykke (Bullhead)`;
+                    details = `Ind: Ø${properties.d_in} -> Afgr 1: Ø${properties.d_out1}, Afgr 2: Ø${properties.d_out2}`;
+                    rootProps = { shape: 'circular', diameter: properties.d_in };
+                }
             } else {
-                properties.d_in = f('sys_tee_d_in');
-                properties.d_straight = isSym ? properties.d_in : f('sys_tee_d_straight');
-                properties.d_branch = isSym ? properties.d_in : f('sys_tee_d_branch');
-                properties.q_straight = f('sys_tee_q_straight');
-                properties.q_branch = f('sys_tee_q_branch');
-                
-                name = isSym ? `T-stykke Sym. Ø${properties.d_in}` : `T-stykke Asym.`;
-                details = `Ligeud: Ø${properties.d_straight}, Afgr: Ø${properties.d_branch}`;
-                rootProps = { shape: 'circular', diameter: properties.d_in };
+                if (isRect) {
+                    properties.h_in = f('sys_tee_h_in'); properties.w_in = f('sys_tee_w_in');
+                    properties.h_straight = isSym ? properties.h_in : f('sys_tee_h_straight');
+                    properties.w_straight = isSym ? properties.w_in : f('sys_tee_w_straight');
+                    properties.h_branch = isSym ? properties.h_in : f('sys_tee_h_branch');
+                    properties.w_branch = isSym ? properties.w_in : f('sys_tee_w_branch');
+                    properties.q_straight = f('sys_tee_q_straight'); properties.q_branch = f('sys_tee_q_branch');
+                    name = isSym ? `T-stykke Rekt. Sym. ${properties.h_in}x${properties.w_in}` : `T-stykke Rekt. Asym.`;
+                    details = `Ligeud: ${properties.h_straight}x${properties.w_straight}, Afgr: ${properties.h_branch}x${properties.w_branch}`;
+                    rootProps = { shape: 'rectangular', height: properties.h_in, width: properties.w_in };
+                } else {
+                    properties.d_in = f('sys_tee_d_in');
+                    properties.d_straight = isSym ? properties.d_in : f('sys_tee_d_straight');
+                    properties.d_branch = isSym ? properties.d_in : f('sys_tee_d_branch');
+                    properties.q_straight = f('sys_tee_q_straight');
+                    properties.q_branch = f('sys_tee_q_branch');
+                    name = isSym ? `T-stykke Sym. Ø${properties.d_in}` : `T-stykke Asym.`;
+                    details = `Ligeud: Ø${properties.d_straight}, Afgr: Ø${properties.d_branch}`;
+                    rootProps = { shape: 'circular', diameter: properties.d_in };
+                }
             }
             break;
         }
@@ -1130,22 +1183,31 @@ if (component.type === 'straightDuct') {
 
             calculationDetails = { A_m2: A_ref, v_ms: v, zeta, Pdyn_Pa };
 
-        } else if (p.type === 'tee_sym' || p.type === 'tee_asym' || p.type === 'tee_bullhead') {
+} else if (p.type && p.type.includes('tee')) {
             const isMerging = globalParams.globalFlowType === 'merging';
-            const isBullhead = p.type === 'tee_bullhead';
+            const isBullhead = p.type.includes('bullhead');
+            const isRect = p.type.includes('_rect');
 
-            const d_main = p.d_in || 0;
-            const d_b1 = isBullhead ? (p.d_out1 || 0) : (p.d_straight || 0);
-            const d_b2 = isBullhead ? (p.d_out2 || 0) : (p.d_branch || 0);
+            let dim_main, dim_b1, dim_b2;
+            let L_in, perim_in, L_b1, perim_b1, L_b2, perim_b2;
 
-            inletDim = { shape: 'round', d: d_main };
+            if (isRect) {
+                dim_main = { shape: 'rect', h: p.h_in || 200, w: p.w_in || 200 };
+                dim_b1 = { shape: 'rect', h: isBullhead ? (p.h_out1||200) : (p.h_straight||200), w: isBullhead ? (p.w_out1||200) : (p.w_straight||200) };
+                dim_b2 = { shape: 'rect', h: isBullhead ? (p.h_out2||200) : (p.h_branch||200), w: isBullhead ? (p.w_out2||200) : (p.w_branch||200) };
+                L_in = Math.max(dim_main.h, dim_main.w) / 1000; perim_in = 2 * (dim_main.h + dim_main.w) / 1000;
+                L_b1 = Math.max(dim_b1.h, dim_b1.w) / 1000; perim_b1 = 2 * (dim_b1.h + dim_b1.w) / 1000;
+                L_b2 = Math.max(dim_b2.h, dim_b2.w) / 1000; perim_b2 = 2 * (dim_b2.h + dim_b2.w) / 1000;
+            } else {
+                dim_main = { shape: 'round', d: p.d_in || 200 };
+                dim_b1 = { shape: 'round', d: isBullhead ? (p.d_out1||200) : (p.d_straight||200) };
+                dim_b2 = { shape: 'round', d: isBullhead ? (p.d_out2||200) : (p.d_branch||200) };
+                L_in = dim_main.d / 1000; perim_in = Math.PI * L_in;
+                L_b1 = dim_b1.d / 1000; perim_b1 = Math.PI * L_b1;
+                L_b2 = dim_b2.d / 1000; perim_b2 = Math.PI * L_b2;
+            }
 
-            const L_in = d_main / 1000;
-            const perim_in = Math.PI * L_in;
-            const L_b1 = d_b1 / 1000;
-            const perim_b1 = Math.PI * L_b1;
-            const L_b2 = d_b2 / 1000;
-            const perim_b2 = Math.PI * L_b2;
+            inletDim = dim_main;
 
             let q_b1 = isBullhead ? p.q_out1 : p.q_straight;
             let q_b2 = isBullhead ? p.q_out2 : p.q_branch;
@@ -1155,8 +1217,7 @@ if (component.type === 'straightDuct') {
 
             if (incomingFlow > 0 && Math.abs((q_b1 + q_b2) - incomingFlow) > 1) {
                 const ratio = incomingFlow / (q_b1 + q_b2);
-                q_b1 *= ratio;
-                q_b2 *= ratio;
+                q_b1 *= ratio; q_b2 *= ratio;
             }
 
             let loss_b1 = 0, loss_b2 = 0;
@@ -1164,23 +1225,19 @@ if (component.type === 'straightDuct') {
 
             if (isBullhead) {
                 if (isMerging) {
-                    const res = physics.calculateConvergingBullheadTeeLoss({ q_in1: q_b1, q_in2: q_b2 }, { d_in1: d_b1, d_in2: d_b2, d_common: d_main }, RHO);
-                    loss_b1 = res.loss1 || 0; loss_b2 = res.loss2 || 0;
-                    details_b1 = res.details1 || {}; details_b2 = res.details2 || {};
+                    const res = physics.calculateConvergingBullheadTeeLoss({ q_in1: q_b1, q_in2: q_b2 }, { in1: dim_b1, in2: dim_b2, common: dim_main }, RHO);
+                    loss_b1 = res.loss1 || 0; loss_b2 = res.loss2 || 0; details_b1 = res.details1 || {}; details_b2 = res.details2 || {};
                 } else {
-                    const res = physics.calculateBullheadTeeLoss({ q_in: incomingFlow, q_out1: q_b1, q_out2: q_b2 }, { d_in: d_main, d_out1: d_b1, d_out2: d_b2 }, RHO);
-                    loss_b1 = res.loss1 || 0; loss_b2 = res.loss2 || 0;
-                    details_b1 = res.details1 || {}; details_b2 = res.details2 || {};
+                    const res = physics.calculateBullheadTeeLoss({ q_in: incomingFlow, q_out1: q_b1, q_out2: q_b2 }, { in: dim_main, out1: dim_b1, out2: dim_b2 }, RHO);
+                    loss_b1 = res.loss1 || 0; loss_b2 = res.loss2 || 0; details_b1 = res.details1 || {}; details_b2 = res.details2 || {};
                 }
             } else {
                 if (isMerging) {
-                    const res = physics.calculateConvergingTeePressureLoss({ q_straight: q_b1, q_branch: q_b2 }, { d_common: d_main, d_straight: d_b1, d_branch: d_b2 }, RHO);
-                    loss_b1 = res.loss_straight || 0; loss_b2 = res.loss_branch || 0;
-                    details_b1 = res.details_straight || {}; details_b2 = res.details_branch || {};
+                    const res = physics.calculateConvergingTeePressureLoss({ q_straight: q_b1, q_branch: q_b2 }, { common: dim_main, straight: dim_b1, branch: dim_b2 }, RHO);
+                    loss_b1 = res.loss_straight || 0; loss_b2 = res.loss_branch || 0; details_b1 = res.details_straight || {}; details_b2 = res.details_branch || {};
                 } else {
-                    const res = physics.calculateTeePressureLoss({ q_in: incomingFlow, q_straight: q_b1, q_branch: q_b2 }, { d_in: d_main, d_straight: d_b1, d_branch: d_b2 }, RHO);
-                    loss_b1 = res.loss_straight || 0; loss_b2 = res.loss_branch || 0;
-                    details_b1 = res.details_straight || {}; details_b2 = res.details_branch || {};
+                    const res = physics.calculateTeePressureLoss({ q_in: incomingFlow, q_straight: q_b1, q_branch: q_b2 }, { in: dim_main, straight: dim_b1, branch: dim_b2 }, RHO);
+                    loss_b1 = res.loss_straight || 0; loss_b2 = res.loss_branch || 0; details_b1 = res.details_straight || {}; details_b2 = res.details_branch || {};
                 }
             }
 
@@ -1190,46 +1247,16 @@ if (component.type === 'straightDuct') {
             if (!isMerging) {
                 if (calculateThermodynamicsFlag) {
                     const thermo_in = physics.calculateTemperatureDrop(incomingTemp, compAmbient, L_in, perim_in, q_m, isoThick, isoLambda, globalParams.globalRH);
-                    const t_mid = thermo_in.t_out;
                     let totalLoss = thermo_in.q_loss;
-
-                    const q_m_b1 = (q_b1 / 3600) * RHO;
-                    const thermo_b1 = physics.calculateTemperatureDrop(t_mid, compAmbient, L_b1, perim_b1, q_m_b1, isoThick, isoLambda, globalParams.globalRH);
-                    totalLoss += thermo_b1.q_loss;
-
-                    const q_m_b2 = (q_b2 / 3600) * RHO;
-                    const thermo_b2 = physics.calculateTemperatureDrop(t_mid, compAmbient, L_b2, perim_b2, q_m_b2, isoThick, isoLambda, globalParams.globalRH);
-                    totalLoss += thermo_b2.q_loss;
-
+                    const thermo_b1 = physics.calculateTemperatureDrop(thermo_in.t_out, compAmbient, L_b1, perim_b1, (q_b1/3600)*RHO, isoThick, isoLambda, globalParams.globalRH);
+                    const thermo_b2 = physics.calculateTemperatureDrop(thermo_in.t_out, compAmbient, L_b2, perim_b2, (q_b2/3600)*RHO, isoThick, isoLambda, globalParams.globalRH);
+                    totalLoss += thermo_b1.q_loss + thermo_b2.q_loss;
                     q_loss_val = totalLoss;
                     temp_out = { [p1Name]: thermo_b1.t_out, [p2Name]: thermo_b2.t_out, 'outlet': thermo_b1.t_out };
-                } else {
-                    temp_out = { [p1Name]: incomingTemp, [p2Name]: incomingTemp, 'outlet': incomingTemp };
-                }
+                } else temp_out = { [p1Name]: incomingTemp, [p2Name]: incomingTemp, 'outlet': incomingTemp };
             } else {
-                if (calculateThermodynamicsFlag) {
-                    const t_in_b1 = incomingTemp; 
-                    const t_in_b2 = incomingTemp; 
-
-                    const rho_b1 = physics.getAirProperties(t_in_b1).RHO;
-                    const rho_b2 = physics.getAirProperties(t_in_b2).RHO;
-
-                    const q_m_b1 = (q_b1 / 3600) * rho_b1;
-                    const thermo_b1 = physics.calculateTemperatureDrop(t_in_b1, compAmbient, L_b1, perim_b1, q_m_b1, isoThick, isoLambda, globalParams.globalRH);
-
-                    const q_m_b2 = (q_b2 / 3600) * rho_b2;
-                    const thermo_b2 = physics.calculateTemperatureDrop(t_in_b2, compAmbient, L_b2, perim_b2, q_m_b2, isoThick, isoLambda, globalParams.globalRH);
-
-                    const q_m_total = q_m_b1 + q_m_b2;
-                    const t_mixed = q_m_total > 0 ? ((q_m_b1 * thermo_b1.t_out + q_m_b2 * thermo_b2.t_out) / q_m_total) : incomingTemp;
-
-                    const thermo_out = physics.calculateTemperatureDrop(t_mixed, compAmbient, L_in, perim_in, q_m, isoThick, isoLambda, globalParams.globalRH);
-
-                    q_loss_val = thermo_b1.q_loss + thermo_b2.q_loss + thermo_out.q_loss;
-                    temp_out = { 'outlet': thermo_out.t_out, [p1Name]: t_in_b1, [p2Name]: t_in_b2 };
-                } else {
-                    temp_out = { 'outlet': incomingTemp, [p1Name]: incomingTemp, [p2Name]: incomingTemp };
-                }
+                // (Termodynamik for udsugning styres af næste traversal - vi reserverer bare objekterne her)
+                temp_out = { 'outlet': incomingTemp, [p1Name]: incomingTemp, [p2Name]: incomingTemp };
             }
 
             v = Math.max(details_b1.v_ms || 0, details_b2.v_ms || 0);
@@ -1242,8 +1269,8 @@ if (component.type === 'straightDuct') {
                 portPressureLoss: { [p1Name]: loss_b1, [p2Name]: loss_b2 }, 
                 zeta: Math.max(details_b1.zeta || 0, details_b2.zeta || 0),
                 inletDimension: inletDim, 
-                inletDimensions: { [isBullhead ? 'path1' : 'straight']: { shape: 'round', d: d_b1 }, [isBullhead ? 'path2' : 'branch']: { shape: 'round', d: d_b2 } }, 
-                outletDimension: { [p1Name]: { shape: 'round', d: d_b1 }, [p2Name]: { shape: 'round', d: d_b2 } },
+                inletDimensions: { [isBullhead ? 'path1' : 'straight']: dim_b1, [isBullhead ? 'path2' : 'branch']: dim_b2 }, 
+                outletDimension: { [p1Name]: dim_b1, [p2Name]: dim_b2 },
                 calculationDetails: { [isBullhead ? 'path1' : 'straight']: details_b1, [isBullhead ? 'path2' : 'branch']: details_b2 },
                 temperature_in: incomingTemp,
                 temperature_out: temp_out,
@@ -1535,9 +1562,17 @@ function recalculateSystem() {
                 if (length > 0) hasSurface = true;
             } else if (c.properties && c.properties.type.includes('tee')) {
                 const p = c.properties;
-                const d_main = p.d_in || 200; 
-                length = d_main / 1000;
-                perimeter = Math.PI * length;
+                const isRect = p.type.includes('_rect');
+                if (isRect) {
+                    const h_main = p.h_in || 200;
+                    const w_main = p.w_in || 200;
+                    length = Math.max(h_main, w_main) / 1000;
+                    perimeter = 2 * ((w_main + h_main) / 1000);
+                } else {
+                    const d_main = p.d_in || 200; 
+                    length = d_main / 1000;
+                    perimeter = Math.PI * length;
+                }
                 if (length > 0) hasSurface = true;
             }
             return { hasSurface, length, perimeter };
@@ -1842,12 +1877,18 @@ window.handleInlineComponentSubmit = function (event, passedSuffix) {
                 const pp = parentComp.properties;
                 if (parentComp.type === 'straightDuct') pDim = pp.shape === 'round' ? {shape: 'round', d: pp.d || pp.diameter} : {shape: 'rect', h: pp.h || pp.sideA, w: pp.w || pp.sideB};
                 else if (parentComp.type.startsWith('tee')) {
-                    if (parentComp.type === 'tee_bullhead') {
-                        pDim = actualParentPort === 'outlet_path2' ? {shape: 'round', d: pp.d_out2} : {shape: 'round', d: pp.d_out1};
+                    const isRect = parentComp.type.includes('_rect');
+                    if (parentComp.type.includes('bullhead')) {
+                        pDim = actualParentPort === 'outlet_path2' 
+                            ? (isRect ? {shape: 'rect', h: pp.h_out2, w: pp.w_out2} : {shape: 'round', d: pp.d_out2}) 
+                            : (isRect ? {shape: 'rect', h: pp.h_out1, w: pp.w_out1} : {shape: 'round', d: pp.d_out1});
                     } else {
-                        pDim = actualParentPort === 'outlet_branch' ? {shape: 'round', d: pp.d_branch} : {shape: 'round', d: pp.d_straight};
+                        pDim = actualParentPort === 'outlet_branch' 
+                            ? (isRect ? {shape: 'rect', h: pp.h_branch, w: pp.w_branch} : {shape: 'round', d: pp.d_branch}) 
+                            : (isRect ? {shape: 'rect', h: pp.h_straight, w: pp.w_straight} : {shape: 'round', d: pp.d_straight});
                     }
                 }
+                
                 else if (parentComp.type === 'expansion' || parentComp.type === 'contraction') pDim = {shape: 'round', d: pp.d2};
                 else if (parentComp.type === 'expansion_rect' || parentComp.type === 'contraction_rect') pDim = {shape: 'rect', h: pp.h2, w: pp.w2};
                 else if (parentComp.type === 'bend_circ') pDim = {shape: 'round', d: pp.d};
@@ -1859,7 +1900,10 @@ window.handleInlineComponentSubmit = function (event, passedSuffix) {
             let cDim = null;
             const cp = component.properties;
             if (component.type === 'straightDuct') cDim = cp.shape === 'round' ? {shape: 'round', d: cp.d || cp.diameter} : {shape: 'rect', h: cp.h || cp.sideA, w: cp.w || cp.sideB};
-            else if (component.type.startsWith('tee')) cDim = {shape: 'round', d: cp.d_in};
+            else if (component.type.startsWith('tee')) {
+                const isRect = component.type.includes('_rect');
+                cDim = isRect ? {shape: 'rect', h: cp.h_in, w: cp.w_in} : {shape: 'round', d: cp.d_in};
+            }
             else if (component.type === 'expansion' || component.type === 'contraction') cDim = {shape: 'round', d: cp.d1};
             else if (component.type === 'expansion_rect' || component.type === 'contraction_rect') cDim = {shape: 'rect', h: cp.h1, w: cp.w1};
             else if (component.type === 'bend_circ') cDim = {shape: 'round', d: cp.d};
